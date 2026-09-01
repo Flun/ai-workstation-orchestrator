@@ -36,6 +36,12 @@
         [v-cloak] { display: none; }
         body { background-color: #09090b; color: #e4e4e7; }
         body.modal-open { overflow: hidden; overscroll-behavior: none; }
+
+        /* 모바일 가로 오버플로우 차단: 가로 스크롤이 생기면 position:fixed 플로팅
+           버튼이 일부 모바일 브라우저에서 뷰포트 바깥으로 밀려나는 문제를 원천 방지.
+           clip 은 스크롤 컨테이너를 만들지 않아 fixed 위치 결정에 영향이 없다. */
+        html, body { overflow-x: hidden; }
+        html, body { overflow-x: clip; }
         
         /* 세련된 스크롤바 */
         ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -48,6 +54,10 @@
         .input-base {
             background-color: #18181b; border: 1px solid #27272a; border-radius: 0.375rem;
             color: #f4f4f5; padding: 0.5rem 0.75rem; font-size: 0.875rem; outline: none;
+            /* select의 고유 폭(가장 긴 option)이 모바일에서 가로 오버플로우를
+               만들어 grid/flex 컨테이너가 화면 밖으로 불어나는 문제를 막기 위해
+               컨테이너 기준 100% + 축소 허용. */
+            width: 100%; min-width: 0;
         }
         .input-base:focus { border-color: #6366f1; box-shadow: 0 0 0 1px #6366f1; }
         .power-menu-item {
@@ -668,7 +678,7 @@
                                 <select v-model="config.version" class="input-base flex-1 font-mono text-xs">
                                     <option v-for="v in scanData.versions" :key="v" :value="v">{{ getDirName(v) }}</option>
                                 </select>
-                                <div class="flex gap-2">
+                                <div class="flex gap-2 shrink-0">
                                     <button @click="openUpdateModal" class="px-4 py-2 text-xs font-medium border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-zinc-300 transition whitespace-nowrap" :disabled="isFetchingReleases">
                                         {{ isFetchingReleases ? 'Checking...' : 'Check Update' }}
                                     </button>
@@ -1210,7 +1220,7 @@
 
         <!-- 플로팅 버튼 스택: 터미널 로그(위) / 메모(아래) -->
         <div class="fixed bottom-6 right-6 z-40 flex flex-col items-center gap-3">
-            <button @click="toggleTerminal" title="Main Server 터미널" aria-label="Main Server 터미널 열기"
+            <button @click="toggleTerminalPanel" title="Main Server 터미널" aria-label="Main Server 터미널 열기"
                 class="w-12 h-12 rounded-full border shadow-lg flex items-center justify-center transition"
                 :class="terminal.show ? 'bg-emerald-500/15 border-emerald-500/60 text-emerald-300' : 'bg-zinc-800 border-zinc-700 hover:border-zinc-500 hover:bg-zinc-700 text-zinc-300'">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m4 17 6-5-6-5M12 19h8"></path></svg>
@@ -1224,7 +1234,7 @@
 
         <!-- 바깥 클릭 감지 오버레이 (투명, 페이지 어두워뜨림 없음) -->
         <transition name="fade">
-            <div v-if="memo.show || terminal.show" class="fixed inset-0 z-30" @click.self="closeMemo(); closeTerminal()"></div>
+            <div v-if="memo.show || terminal.show" class="fixed inset-0 z-30" @click.self="closeMemo(); closeTerminalPanel()"></div>
         </transition>
 
         <!-- 메모 패널 -->
@@ -1271,7 +1281,7 @@
                             :class="terminal.paused ? 'bg-amber-500/15 border-amber-500/40 text-amber-300' : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700'">
                             {{ terminal.paused ? '재개' : '일시정지' }}
                         </button>
-                        <button @click="closeTerminal" class="text-zinc-500 hover:text-zinc-200 transition" title="닫기 (Esc)">
+                        <button @click="closeTerminalPanel" class="text-zinc-500 hover:text-zinc-200 transition" title="닫기 (Esc)">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                         </button>
                     </div>
@@ -2363,7 +2373,7 @@
                     } catch (e) {}
                 },
                 openMemo() {
-                    if (this.terminal.show) this.closeTerminal();
+                    if (this.terminal.show) this.closeTerminalPanel();
                     this.memo.show = true;
                     if (!this.memo.content) this.fetchMemo();
                 },
@@ -2395,20 +2405,22 @@
                     await this.saveMemoNow();
                 },
 
-                openTerminal() {
+                // 기존 openTerminal(target) 메서드(서비스 Console용)와 이름 충돌을 피하기
+                // 위해 *Panel 접미어 이름을 사용.
+                openTerminalPanel() {
                     if (this.memo.show) this.closeMemo();
                     this.terminal.show = true;
                     this.terminal.paused = false;
                     this.fetchTerminal();
                     this.startTerminalPolling();
                 },
-                closeTerminal() {
+                closeTerminalPanel() {
                     this.terminal.show = false;
                     this.stopTerminalPolling();
                 },
-                toggleTerminal() {
-                    if (this.terminal.show) this.closeTerminal();
-                    else this.openTerminal();
+                toggleTerminalPanel() {
+                    if (this.terminal.show) this.closeTerminalPanel();
+                    else this.openTerminalPanel();
                 },
                 startTerminalPolling() {
                     this.stopTerminalPolling();
@@ -2438,7 +2450,7 @@
                 onGlobalKeydown(event) {
                     if (event.key !== 'Escape') return;
                     if (this.memo.show) this.closeMemo();
-                    if (this.terminal.show) this.closeTerminal();
+                    if (this.terminal.show) this.closeTerminalPanel();
                 },
 
                 async openFolder(target) {
