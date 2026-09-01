@@ -12,6 +12,12 @@
     
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- 웹 터미널(xterm.js): tmux 세션을 브라우저에서 조작한다.
+         CDN 대신 app이 서빙하는 벤더 복사본 (jsdelivr 불안정 대응) -->
+    <link rel="stylesheet" href="/vendor/xterm.css">
+    <script src="/vendor/xterm.js"></script>
+    <script src="/vendor/addon-fit.js"></script>
     
     <script>
         tailwind.config = {
@@ -98,6 +104,9 @@
                 <a href="/dataset" class="px-3 py-2 text-sm font-medium border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 rounded-lg transition shadow-sm">Dataset</a>
                 <a href="/vast" class="px-3 py-2 text-sm font-medium border border-sky-500/30 bg-sky-500/10 hover:bg-sky-500/20 text-sky-300 rounded-lg transition shadow-sm">Vast Remote</a>
                 <a href="/infrastructure" class="px-3 py-2 text-sm font-medium border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 rounded-lg transition shadow-sm">통합 환경</a>
+                <button @click="openTerminalFromNav" title="OS 터미널 열기 (tmux · root · 기기 간 연속)" class="px-3 py-2 text-sm font-medium border border-zinc-600 bg-zinc-800/70 hover:bg-zinc-700/80 hover:text-white text-zinc-200 rounded-lg transition shadow-sm flex items-center gap-1.5">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m4 17 6-5-6-5M12 19h8"></path></svg> Terminal
+                </button>
                 <div class="relative ml-auto sm:ml-0" @click.outside="powerMenuOpen=false">
                     <button @click.stop="powerMenuOpen=!powerMenuOpen" :disabled="powerBusy" class="flex h-10 w-10 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-800/70 text-zinc-300 shadow-sm transition hover:border-zinc-600 hover:bg-zinc-700/80 hover:text-white disabled:opacity-40" title="전원 및 서버 제어" aria-label="전원 및 서버 제어" :aria-expanded="powerMenuOpen">
                         <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 2v10m6.36-6.36a9 9 0 1 1-12.72 0"></path></svg>
@@ -1266,32 +1275,85 @@
             </div>
         </transition>
 
-        <!-- Main Server 터미널 로그 패널 -->
-        <transition name="slide-up">
-            <div v-if="terminal.show" role="dialog" aria-label="Main Server 터미널" class="fixed bottom-36 right-6 w-[calc(100vw-3rem)] h-[68vh] max-h-[48rem] sm:w-[40rem] bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl z-40 flex flex-col overflow-hidden">
-                <div class="flex items-center gap-3 bg-zinc-950 px-4 py-3 border-b border-zinc-800">
-                    <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0" :class="!terminal.paused ? 'animate-pulse' : ''"></span>
-                    <h3 class="min-w-0 truncate font-mono text-sm font-medium text-zinc-200">Main Server <span class="text-zinc-500">/ 터미널</span></h3>
-                    <span class="text-[10px] text-zinc-600 font-mono shrink-0">{{ terminal.lines.length }}줄</span>
+        <!-- 터미널 패널: 탭(Main Server 로그 + tmux OS 터미널) · 플로팅(컴팩트)/헤더(와이드) -->
+        <transition :name="terminal.wide ? 'fade' : 'slide-up'">
+            <div v-if="terminal.show" role="dialog" aria-label="터미널"
+                :class="[
+                    terminal.wide
+                        ? 'fixed left-1/2 top-[6vh] -translate-x-1/2 w-[min(1100px,94vw)] h-[88vh]'
+                        : 'fixed bottom-36 right-6 w-[calc(100vw-3rem)] h-[68vh] max-h-[48rem] sm:w-[40rem]',
+                    'bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl z-40 flex flex-col overflow-hidden'
+                ]">
+                <!-- 헤더 -->
+                <div class="flex items-center gap-3 bg-zinc-950 px-4 py-3 border-b border-zinc-800 shrink-0">
+                    <span class="w-2.5 h-2.5 rounded-full shrink-0" :class="terminal.activeTab === 'main' ? (!terminal.paused ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500') : (activeTermTab && activeTermTab.connected ? 'bg-emerald-500' : 'bg-amber-500')"></span>
+                    <h3 class="min-w-0 truncate font-mono text-sm font-medium text-zinc-200">터미널</h3>
+                    <span class="text-[10px] text-zinc-600 font-mono shrink-0 hidden sm:inline">{{ terminal.lines.length }}줄 · {{ terminal.tabs.length }}탭</span>
                     <div class="ml-auto flex items-center gap-2.5 shrink-0">
-                        <label class="flex items-center gap-1.5 text-[11px] text-zinc-400 cursor-pointer hover:text-zinc-200 transition select-none">
-                            <input type="checkbox" v-model="terminal.autoScroll" class="w-3.5 h-3.5 rounded bg-zinc-800 border-zinc-700 text-emerald-500 focus:ring-emerald-500/50"> 자동 스크롤
-                        </label>
-                        <button @click="terminal.paused = !terminal.paused" class="text-[11px] font-medium px-2.5 py-1 rounded-md border transition"
-                            :class="terminal.paused ? 'bg-amber-500/15 border-amber-500/40 text-amber-300' : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700'">
-                            {{ terminal.paused ? '재개' : '일시정지' }}
+                        <template v-if="terminal.activeTab === 'main'">
+                            <label class="flex items-center gap-1.5 text-[11px] text-zinc-400 cursor-pointer hover:text-zinc-200 transition select-none">
+                                <input type="checkbox" v-model="terminal.autoScroll" class="w-3.5 h-3.5 rounded bg-zinc-800 border-zinc-700 text-emerald-500 focus:ring-emerald-500/50"> 자동 스크롤
+                            </label>
+                            <button @click="terminal.paused = !terminal.paused" class="text-[11px] font-medium px-2.5 py-1 rounded-md border transition"
+                                :class="terminal.paused ? 'bg-amber-500/15 border-amber-500/40 text-amber-300' : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700'">
+                                {{ terminal.paused ? '재개' : '일시정지' }}
+                            </button>
+                        </template>
+                        <span v-else-if="activeTermTab" class="flex items-center gap-1.5 text-[10px] font-mono" :class="activeTermTab.connected ? 'text-emerald-400' : 'text-amber-400'">
+                            <span class="w-1.5 h-1.5 rounded-full" :class="activeTermTab.connected ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'"></span>
+                            {{ activeTermTab.connected ? '연결됨' : '재연결 중...' }}
+                        </span>
+                        <button @click="toggleTerminalWide" class="p-1 text-zinc-500 hover:text-zinc-200 transition" :title="terminal.wide ? '컴팩트로 축소' : '넓게 확대'" :aria-label="terminal.wide ? '컴팩트로 축소' : '넓게 확대'">
+                            <svg v-if="terminal.wide" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 9V4.5M9 9H4.5M9 9L4 4m11 5V4.5M15 9h4.5M15 9l5-5"></path></svg>
+                            <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.5 9H9m-4.5 0L9 4.5M19.5 9H15m4.5 0L15 4.5M4.5 15H9m-4.5 0l4.5 4.5M19.5 15H15m4.5 0l-4.5 4.5"></path></svg>
                         </button>
                         <button @click="closeTerminalPanel" class="text-zinc-500 hover:text-zinc-200 transition" title="닫기 (Esc)">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                         </button>
                     </div>
                 </div>
-                <div id="terminal-log" class="flex-1 min-h-0 overflow-y-auto bg-[#0c0c0e] p-3 sm:p-4 font-mono text-[11px] leading-[1.65]">
-                    <div v-if="!terminal.lines.length" class="text-zinc-600">로딩 중...</div>
-                    <div v-for="(line, i) in terminal.lines" :key="i" class="flex gap-2.5 whitespace-pre-wrap break-words">
-                        <span class="shrink-0 select-none text-zinc-600/90">{{ line.t }}</span>
-                        <span class="min-w-0 text-zinc-300">{{ line.s }}</span>
+
+                <!-- 탭 바 -->
+                <div class="flex items-center gap-1.5 px-3 py-2 bg-zinc-950/80 border-b border-zinc-800 overflow-x-auto shrink-0">
+                    <button v-for="tab in terminal.tabs" :key="'tab-'+tab.id" @click="switchTerminalTab(tab.id)"
+                        class="group shrink-0 flex items-center gap-1.5 pl-2.5 pr-1.5 py-1.5 rounded-md text-[11px] font-medium border transition"
+                        :class="terminal.activeTab === tab.id ? 'bg-zinc-800 border-zinc-600 text-zinc-100' : 'bg-transparent border-transparent text-zinc-500 hover:text-zinc-300 hover:border-zinc-800'"
+                        :title="tab.kind === 'log' ? 'main_server 로그' : ('tmux 세션 ' + tab.id)">
+                        <span class="w-1.5 h-1.5 rounded-full shrink-0" :class="tab.kind === 'log' ? 'bg-sky-500' : (tab.connected ? 'bg-emerald-500' : 'bg-amber-500')"></span>
+                        <span class="max-w-[10rem] truncate">{{ tab.label }}</span>
+                        <span v-if="tab.closable" role="button" tabindex="0" @click.stop="closeTerminalTab(tab.id)" @keydown.enter.stop="closeTerminalTab(tab.id)"
+                            class="w-4 h-4 flex items-center justify-center rounded cursor-pointer text-zinc-500 hover:text-rose-400 hover:bg-zinc-700/70"
+                            title="닫기 — tmux 세션과 그 안의 작업도 함께 종료">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        </span>
+                    </button>
+                    <button @click="addTerminalTab" :disabled="!terminal.webTermAvailable"
+                        class="shrink-0 flex items-center gap-1 ml-1 px-2 py-1.5 rounded-md border border-dashed border-zinc-700 text-zinc-500 hover:text-zinc-200 hover:border-zinc-500 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                        title="OS 터미널 탭 추가 (root 셸 · tmux)">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.5v15m7.5-7.5h-15"></path></svg>
+                        <span class="text-[11px] font-medium">Terminal</span>
+                    </button>
+                </div>
+
+                <!-- 본문: 로그 뷰 / xterm 호스트 -->
+                <div class="flex-1 min-h-0 relative">
+                    <div v-show="terminal.activeTab === 'main'" id="terminal-log" class="absolute inset-0 overflow-y-auto bg-[#0c0c0e] p-3 sm:p-4 font-mono text-[11px] leading-[1.65]">
+                        <div v-if="!terminal.lines.length" class="text-zinc-600">로딩 중...</div>
+                        <div v-for="(line, i) in terminal.lines" :key="i" class="flex gap-2.5 whitespace-pre-wrap break-words">
+                            <span class="shrink-0 select-none text-zinc-600/90">{{ line.t }}</span>
+                            <span class="min-w-0 text-zinc-300">{{ line.s }}</span>
+                        </div>
                     </div>
+                    <!-- 인-DOM 템플릿에서는 <template>가 HTML template 요소를 만나면
+                         content 조각으로 격리되어 Vue가 못 보므로 div v-for 사용 -->
+                    <div v-for="tab in termTabList" :key="'host-'+tab.id" :data-term="tab.id" v-show="terminal.activeTab === tab.id"
+                        class="term-host absolute inset-0 bg-[#0c0c0e] p-2.5"></div>
+                </div>
+
+                <!-- 터미널 탭 푸터 힌트 -->
+                <div v-if="activeTermTab" class="bg-zinc-950 px-4 py-1.5 text-[10px] text-zinc-600 border-t border-zinc-800 flex items-center gap-3 shrink-0">
+                    <span class="font-mono text-zinc-500">{{ activeTermTab.id }}</span>
+                    <span class="truncate">root 셸 · 어떤 기기에서 접속해도 같은 세션에 이어집니다 · 탭을 닫으면 세션이 종료됩니다</span>
                 </div>
             </div>
         </transition>
@@ -1361,7 +1423,13 @@
                         { key: 'fast_fp16_accumulation', label: '--fast fp16_accumulation' }
                     ],
                     memo: { show: false, content: '', saving: false, lastSaved: null }, memoTimeout: null,
-                    terminal: { show: false, lines: [], autoScroll: true, paused: false, timer: null },
+                    terminal: {
+                        show: false, wide: false,
+                        lines: [], autoScroll: true, paused: false, timer: null,
+                        webTermAvailable: true,
+                        tabs: [{ id: 'main', label: 'Main Server', kind: 'log', closable: false, term: null, fit: null, ws: null, connected: false }],
+                        activeTab: 'main',
+                    },
                     isFetchingReleases: false, showUpdateModal: false,
                     releaseInfo: { tag_name: "", html_url: "", assets: [], installed: false, install_root: "", stable_tag: "", nightly_tag: "", driver_max_cuda: null },
                     selectedAsset: null, isUpdating: false,
@@ -1389,6 +1457,13 @@
                 };
             },
             computed: {
+                activeTermTab() {
+                    const tab = this.terminal.tabs.find(t => t.id === this.terminal.activeTab);
+                    return (tab && tab.kind === 'term') ? tab : null;
+                },
+                termTabList() {
+                    return this.terminal.tabs.filter(t => t.kind === 'term');
+                },
                 comfyModalInstance() {
                     return this.comfyInstances.find(item => item.key === this.comfyArgsModal.instance)
                         || this.comfyInstances[0]
@@ -2407,20 +2482,49 @@
 
                 // 기존 openTerminal(target) 메서드(서비스 Console용)와 이름 충돌을 피하기
                 // 위해 *Panel 접미어 이름을 사용.
-                openTerminalPanel() {
+                openTerminalPanel(forceWide) {
                     if (this.memo.show) this.closeMemo();
+                    // 플로팅 버튼=컴팩트, 헤더 버튼=와이드, 토글은 지정 값
+                    this.terminal.wide = (forceWide === undefined) ? this.terminal.wide : forceWide;
                     this.terminal.show = true;
                     this.terminal.paused = false;
+                    this.refreshTerminalSessions();
                     this.fetchTerminal();
                     this.startTerminalPolling();
+                    this.$nextTick(() => {
+                        const tab = this.terminal.tabs.find(t => t.id === this.terminal.activeTab);
+                        if (tab && tab.kind === 'term') {
+                            this.ensureTerminalTab(tab);
+                            this.reattachTerminalWs(tab);
+                            this.fitTerminalTab(tab);
+                        }
+                    });
+                },
+                // 헤더의 Terminal 버튼: 와이드(넓은) 화면으로 열기
+                openTerminalFromNav() {
+                    this.openTerminalPanel(true);
+                },
+                // 크기 전환은 재연결로: attach 중 resize면 tmux가 화면을 지운다.
+                // 대신 끊고 새 크기로 다시 붙으면 전체 화면이 다시 그려진다.
+                toggleTerminalWide() {
+                    const wide = !this.terminal.wide;
+                    this.closeTerminalPanel();
+                    this.openTerminalPanel(wide);
                 },
                 closeTerminalPanel() {
                     this.terminal.show = false;
                     this.stopTerminalPolling();
+                    // xterm 인스턴스는 v-if가 없앤 호스트 요소에 묶여 있어 재사용 불가 —
+                    // 인스턴스를 폐기하고 다음 열림 때 재생성한다.
+                    // tmux 세션 자체는 서버에 그대로 두어 다른 기기/다음 접속에서 이어진다.
+                    for (const tab of this.terminal.tabs) {
+                        if (tab.kind === 'term') this.disposeTerminalTab(tab);
+                    }
                 },
+                // 플로팅 버튼: 항상 컴팩트(우측 하단)로 열기
                 toggleTerminalPanel() {
                     if (this.terminal.show) this.closeTerminalPanel();
-                    else this.openTerminalPanel();
+                    else this.openTerminalPanel(false);
                 },
                 startTerminalPolling() {
                     this.stopTerminalPolling();
@@ -2446,6 +2550,192 @@
                             });
                         }
                     } catch(e) {}
+                },
+
+                // ---------- tmux 웹 터미널 탭 ----------
+                newTermTab() {
+                    return { id: '', label: '', kind: 'term', closable: true, term: null, fit: null, ws: null, connected: false, _resizeHandler: null };
+                },
+                // 서버의 tmux 세션을 탭으로 동기화 — 어떤 기기에서 접속하든
+                // 기존 세션이 탭으로 나타나 같은 터미널에 이어 붙는다(연속성).
+                async refreshTerminalSessions() {
+                    try {
+                        const res = await fetch('/api/terminal/sessions');
+                        const data = await res.json();
+                        this.terminal.webTermAvailable = !!data.available;
+                        if (!data.available) return;
+                        for (const s of (data.sessions || [])) {
+                            if (!this.terminal.tabs.some(t => t.id === s.name)) {
+                                const tab = this.newTermTab();
+                                tab.id = s.name;
+                                tab.label = s.name;
+                                this.terminal.tabs.push(tab);
+                            }
+                        }
+                    } catch (e) {}
+                },
+                async addTerminalTab() {
+                    if (!window.Terminal || !window.FitAddon) {
+                        alert('터미널 라이브러리(xterm.js)가 로드되지 않았습니다. 페이지를 새로고침해 주세요.');
+                        return;
+                    }
+                    try {
+                        const res = await fetch('/api/terminal/sessions', { method: 'POST' });
+                        const data = await res.json().catch(() => ({}));
+                        if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+                        const tab = this.newTermTab();
+                        tab.id = data.name;
+                        tab.label = data.name;
+                        this.terminal.tabs.push(tab);
+                        this.switchTerminalTab(data.name);
+                    } catch (e) {
+                        alert('터미널 탭 생성 실패: ' + e.message);
+                    }
+                },
+                switchTerminalTab(id) {
+                    const tab = this.terminal.tabs.find(t => t.id === id);
+                    if (!tab) return;
+                    this.terminal.activeTab = id;
+                    if (tab.kind === 'term') {
+                        // DOM 플러시(새 탭의 호스트 div)가 끝나야 xterm을 열 수 있다
+                        this.$nextTick(() => {
+                            this.ensureTerminalTab(tab);
+                            this.reattachTerminalWs(tab);
+                            this.fitTerminalTab(tab);
+                            if (tab.term) tab.term.focus();
+                        });
+                    }
+                },
+                // xterm 인스턴스(1회) + WebSocket 연결(단절 시 자동 재시도)
+                ensureTerminalTab(tab) {
+                    if (tab.term) return;
+                    if (!window.Terminal || !window.FitAddon) return;
+                    const host = document.getElementById('app').querySelector(`.term-host[data-term="${tab.id}"]`);
+                    if (!host) return;
+                    const term = new window.Terminal({
+                        cursorBlink: true,
+                        fontSize: 12.5,
+                        fontFamily: "'JetBrains Mono', monospace",
+                        scrollback: 20000,
+                        allowProposedApi: true,
+                        theme: {
+                            background: '#0c0c0e',
+                            foreground: '#d4d4d8',
+                            cursor: '#818cf8',
+                            selectionBackground: 'rgba(99,102,241,0.35)',
+                            black: '#09090b', red: '#f87171', green: '#34d399', yellow: '#fbbf24',
+                            blue: '#60a5fa', magenta: '#c084fc', cyan: '#22d3ee', white: '#e4e4e7',
+                        }
+                    });
+                    const fit = new window.FitAddon.FitAddon();
+                    term.loadAddon(fit);
+                    term.open(host);
+                    tab.term = term;
+                    tab.fit = fit;
+                    term.onData((d) => {
+                        if (tab.ws && tab.ws.readyState === WebSocket.OPEN) {
+                            tab.ws.send(new TextEncoder().encode(d));
+                        }
+                    });
+                    tab._resizeHandler = () => {
+                        if (this.terminal.activeTab === tab.id) this.fitTerminalTab(tab);
+                    };
+                    window.addEventListener('resize', tab._resizeHandler);
+                    // 연결 전에 먼저 fit: attach pty를 최종 크기로 만들어
+                    // attach 후 resize로 화면이 지워지는 것을 막는다
+                    if (host.clientWidth > 10 && host.clientHeight > 10) {
+                        try { fit.fit(); } catch (e) {}
+                    }
+                    this.attachTerminalWs(tab);
+                },
+                // WS가 죽어 있으면(패널 닫힘/네트워크 단절) 재접속 — tmux가
+                // 화면 전체를 다시 그리므로 어떤 기기에서 접속해도 현재 상태가 온다
+                reattachTerminalWs(tab) {
+                    if (!tab.term) return;
+                    if (tab.ws && tab.ws.readyState <= WebSocket.OPEN) return;
+                    this.attachTerminalWs(tab);
+                },
+                attachTerminalWs(tab) {
+                    if (tab.ws) { try { tab.ws.onclose = null; tab.ws.close(); } catch (e) {} }
+                    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+                    let url = `${proto}://${location.host}/ws/terminal/${encodeURIComponent(tab.id)}`;
+                    if (tab.term && tab.term.cols > 1 && tab.term.rows > 1) {
+                        url += `?cols=${tab.term.cols}&rows=${tab.term.rows}`;
+                    }
+                    const ws = new WebSocket(url);
+                    ws.binaryType = 'arraybuffer';
+                    tab.ws = ws;
+                    ws.onopen = () => {
+                        tab.connected = true;
+                        tab._lastCols = tab.term ? tab.term.cols : 0;
+                        tab._lastRows = tab.term ? tab.term.rows : 0;
+                        this.fitTerminalTab(tab);
+                        if (tab.term) tab.term.focus();
+                    };
+                    ws.onmessage = (ev) => {
+                        if (typeof ev.data === 'string') {
+                            try {
+                                const m = JSON.parse(ev.data);
+                                if (m.type === 'err' && tab.term) {
+                                    tab.connected = false;
+                                    tab.term.writeln('\r\n\x1b[31m' + m.message + '\x1b[0m');
+                                } else if (m.type === 'closed' && tab.term) {
+                                    tab.connected = false;
+                                    tab.term.writeln('\r\n\x1b[33m[연결이 닫혔습니다]\x1b[0m');
+                                }
+                            } catch (e) {}
+                        } else if (tab.term) {
+                            tab.term.write(new Uint8Array(ev.data));
+                        }
+                    };
+                    ws.onclose = () => {
+                        if (tab.ws !== ws) return;
+                        tab.connected = false;
+                        // 패널이 열려 있으면 2초 간격으로 자동 재연결
+                        if (this.terminal.show) {
+                            setTimeout(() => {
+                                if (this.terminal.show && tab.ws === ws && !tab.connected && tab.term) {
+                                    this.attachTerminalWs(tab);
+                                }
+                            }, 2000);
+                        }
+                    };
+                    ws.onerror = () => {};
+                },
+                fitTerminalTab(tab) {
+                    if (!tab.term || !tab.fit) return;
+                    requestAnimationFrame(() => {
+                        try {
+                            const prevCols = tab._lastCols, prevRows = tab._lastRows;
+                            tab.fit.fit();
+                            tab._lastCols = tab.term.cols;
+                            tab._lastRows = tab.term.rows;
+                            // 크기가 실제로 바뀌었을 때만 resize 전달
+                            if (tab.ws && tab.ws.readyState === WebSocket.OPEN &&
+                                (prevCols !== tab.term.cols || prevRows !== tab.term.rows)) {
+                                tab.ws.send(JSON.stringify({ type: 'resize', cols: tab.term.cols, rows: tab.term.rows }));
+                            }
+                        } catch (e) {}
+                    });
+                },
+                // 탭 제거 = 해당 tmux 세션(그 안의 작업 포함)을 완전히 종료
+                async closeTerminalTab(id) {
+                    const tab = this.terminal.tabs.find(t => t.id === id);
+                    if (!tab || !tab.closable) return;
+                    if (!confirm(`터미널 "${id}"를 닫으려면 세션이 종료됩니다.\n그 터미널에서 실행 중인 작업도 함께 사라집니다.\n\n계속할까요?`)) return;
+                    try {
+                        await fetch(`/api/terminal/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+                    } catch (e) {}
+                    this.disposeTerminalTab(tab);
+                    const idx = this.terminal.tabs.indexOf(tab);
+                    this.terminal.tabs.splice(idx, 1);
+                    if (this.terminal.activeTab === id) this.terminal.activeTab = 'main';
+                },
+                disposeTerminalTab(tab) {
+                    if (tab._resizeHandler) { window.removeEventListener('resize', tab._resizeHandler); tab._resizeHandler = null; }
+                    if (tab.ws) { try { tab.ws.onclose = null; tab.ws.close(); } catch (e) {} tab.ws = null; }
+                    if (tab.term) { try { tab.term.dispose(); } catch (e) {} tab.term = null; tab.fit = null; }
+                    tab.connected = false;
                 },
                 onGlobalKeydown(event) {
                     if (event.key !== 'Escape') return;
@@ -2826,6 +3116,7 @@
                 document.removeEventListener('keydown', this.onGlobalKeydown);
                 this.stopTerminalPolling();
                 if (this.memoTimeout) clearTimeout(this.memoTimeout);
+                for (const tab of this.terminal.tabs) this.disposeTerminalTab(tab);
             }
         }).mount('#app');
     </script>

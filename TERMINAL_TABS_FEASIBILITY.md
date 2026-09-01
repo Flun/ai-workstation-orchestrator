@@ -3,6 +3,37 @@
 > 2026-09-01 · floating memo/terminal 패널 구현 이후 후속 기능 검토 문서
 > 결론부터: **둘 다 구현 가능함.** 탭 UI는 소규모, 인터랙티브 웹 터미널은 tmux + WebSocket + xterm.js 조합이 적절하고,
 > "다른 PC/모바일을 넘어가도 연속성 유지" 조건은 tmux가 본질적으로 보장한다.
+>
+> **2026-09-01 이후 구현 완료** (본 문서의 권장안 그대로 반영):
+> - 터미널 패널 탭 바: `Main Server`(로그) + 추가/제거 가능한 tmux OS 터미널 탭
+> - `GET/POST/DELETE /api/terminal/sessions` + `WS /ws/terminal/{name}?cols=&rows=` (pty ↔ `sudo tmux attach` 브리지)
+> - 세션은 루트 셸로 생성(`sudo -n tmux new-session`, flux의 전수 NOPASSWD sudo 이용),
+>   history-limit 20000 / xterm scrollback 20000 (상단 로그 복사용)
+> - 기기 간 연속성: 세션 상태는 tmux(루트) 서버에 → 어떤 디바이스에서 접속해도 같은 세션에 붙고,
+>   패널 재열림 시 서버 세션 목록으로 탭 복원, WS 단절 시 2초 간격 자동 재연결
+> - 탭 제거 = `tmux kill-session` (작업 포함 완전 종료)
+> - 헤더 Terminal 버튼으로 와이드 모드(min(1100px,94vw)×88vh) 열기, 플로팅 버튼은 컴팩트,
+>   헤더의 확대/축소 버튼으로 전환(전환 시 재접속 — 아래 resize 제한 때문에)
+>
+> **구현 중 발견한 tmux/xterm 특성 (중요):**
+> 1. **attach 이후 resize 시 tmux가 화면을 지운다.** 그래서 xterm fit을 먼저 수행해
+>    최종 cols/rows를 WS URL 파라미터로 보내, pty를 *붙기 전*에 올바른 크기로 만든다.
+>    attach 후 resize(브라우저 창 리사이즈 등)는 계속 전달되지만 화면 리셋을 감수.
+>    wide/compact 전환은 대신 재접속(새 크기 attach → 전체 화면 다시 그린다) 방식으로 처리.
+> 2. **systemd user 서비스 환경은 TERM=dumb** → attach 프로세스에
+>    `TERM=xterm-256color` env를 명시해서 준다 (안 주면 tmux가 attach를 거부).
+> 3. **bracketed paste**: bash(5.x)가 인터랙티브 셸 시작 시 2004h를 켜고, xterm.js의
+>    `paste()`(클립보드 Ctrl+V 포함)가 이 모드를 존중해 `\x1b[200~...\x1b[201~`로 감싼다.
+>    즉 붙여넣은 텍스트 끝의 CR은 자동 실행되지 않고(모든 최신 터미널과 동일한 안전 동작),
+>    사용자가 Enter를 누르면 실행된다. 키보드 입력(Ctrl+C 등)은 key 이벤트 경로라 영향을 받지 않는다.
+> 4. **Vue in-DOM 템플릿 함정**: (a) `<button>` 안에 `<button>`은 브라우저 파서가
+>    재구성해 v-for 스코프가 깨진다 — 닫기 버튼은 `<span role="button">` 사용.
+>    (b) `<template v-for>`는 HTML `<template>` 요소가 content 프래그먼트로 격리돼 Vue가
+>    아예 못 본다 — div v-for + computed 필터로 대체.
+>    (c) 패널 `v-if`가 false로 되면 호스트 DOM이 사라지므로 xterm 인스턴스는 폐기 후
+>    재열림 때 재생성해야 한다(재생성 시 tmux 전체 화면 redraw로 상태가 온다).
+> 5. **xterm.js는 CDN(jsdelivr)이 들쭉날쭉 끊겨** 조용히 실패하는 사례가 있어서
+>    pin된 버전을 `vendor/`에 들여와 앱이 `/vendor/{xterm.js,addon-fit.js,xterm.css}`로 직접 서빙.
 
 ---
 

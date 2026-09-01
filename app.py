@@ -1,3 +1,4 @@
+import asyncio
 import glob
 import hashlib
 import json
@@ -6,6 +7,7 @@ import platform
 import re
 import shlex
 import shutil
+import struct
 import subprocess
 import sys
 import tarfile
@@ -17,12 +19,17 @@ from pathlib import Path
 
 import psutil
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
 import requests
 
 from config import BASE_DIR, IS_WINDOWS, settings
+
+if not IS_WINDOWS:
+    import fcntl
+    import pty
+    import termios
 from gpu import (
     build_gpu_topology,
     get_gpus,
@@ -1484,6 +1491,35 @@ def infrastructure_page():
     return FileResponse(
         os.path.join(BASE_DIR, "infrastructure.html"),
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
+# ---------- 벤더 스크립트 ----------
+# xterm.js 계열은 CDN(jsdelivr)이 들쭉날쭉 끊겨 터미널 탭이 조용히 안 뜨는
+# 일이 있어서, pin된 버전을 repo의 vendor/ 에 들여와 앱이 직접 서빙한다.
+
+_VENDORED_FILES = {
+    "xterm.js": ("application/javascript; charset=utf-8", "xterm 5.5.0"),
+    "addon-fit.js": ("application/javascript; charset=utf-8", "addon-fit 0.10.0"),
+    "xterm.css": ("text/css; charset=utf-8", "xterm-css 5.5.0"),
+}
+
+
+@app.get("/vendor/{name}")
+def vendored(name: str):
+    meta = _VENDORED_FILES.get(name)
+    if meta is None:
+        raise HTTPException(404, "Unknown vendor asset")
+    content_type, label = meta
+    path = os.path.join(BASE_DIR, "vendor", name)
+    if not os.path.isfile(path):
+        # 재시도 없이 명확히 실패 — 브라우저가 에러를 보고, 프론트도 알 수 있게
+        raise HTTPException(500, f"vendored asset missing: {label}")
+    return FileResponse(
+        path,
+        media_type=content_type,
+        # 버전에 pin된 불변 파일: 브라우저는 강하게 캐시할 수 있다
+        headers={"Cache-Control": "public, max-age=86400, immutable"},
     )
 
 
@@ -3037,6 +3073,200 @@ def _main_terminal_lines(lines: int):
 def terminal_main(lines: int = 400):
     body, source = _main_terminal_lines(lines)
     return {"lines": body, "source": source, "count": len(body)}
+
+
+# ---------- 웹 터미널 (tmux 기반, root 셸, 기기 간 연속) ----------
+#
+# 브라우저(xterm.js) <-> WebSocket <-> pty <-> `sudo tmux attach`.
+# 세션 상태(cwd/실행 중 작업/스크롤백)는 tmux 서버(루트)에 있으므로 어떤
+# 디바이스로 접속하든 같은 세션에 붙는다. 탭을 없애면 kill-session으로
+# 세션과 그 안의 작업이 함께 종료된다.
+
+TERM_SESSION_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$")
+TERM_HISTORY_LIMIT = 20000
+
+
+def _sudo_tmux(*args, timeout=20):
+    """tmux를 루트로 실행. flux 사용자는 전수 NOPASSWD sudo를 가진다."""
+    proc = subprocess.run(
+        ["sudo", "-n", "tmux", *args],
+        capture_output=True, text=True, timeout=timeout,
+    )
+    return proc.returncode, (proc.stdout or "").strip(), (proc.stderr or "").strip()
+
+
+def _web_terminal_available() -> bool:
+    if IS_WINDOWS:
+        return False
+    return shutil.which("tmux") is not None
+
+
+@app.get("/api/terminal/sessions")
+def terminal_sessions():
+    if not _web_terminal_available():
+        return {"available": False, "sessions": []}
+    rc, out, _err = _sudo_tmux("list-sessions", "-F", "#{session_name}\t#{session_attached}")
+    if rc != 0:
+        return {"available": True, "sessions": []}
+    sessions = []
+    for line in out.splitlines():
+        name, _, attached = line.partition("\t")
+        sessions.append({"name": name, "attached": int(attached or 0)})
+    return {"available": True, "sessions": sessions}
+
+
+@app.post("/api/terminal/sessions")
+def terminal_session_create():
+    if not _web_terminal_available():
+        raise HTTPException(501, "웹 터미널은 Linux에서만 지원합니다")
+    name = f"term-{int(time.time()) % 100000000:08d}"
+    rc, _out, _err = _sudo_tmux("has-session", "-t", name)
+    if rc == 0:  # 같은 초에 재요청이 들어온 경우 접미사 추가
+        name += f"-{int(time.time()) % 100000:05d}"
+    rc, _out, err = _sudo_tmux("new-session", "-d", "-s", name, "-c", "~", "-x", "200", "-y", "50")
+    if rc != 0:
+        raise HTTPException(500, f"tmux 세션 생성 실패: {err}")
+    _sudo_tmux("set-option", "-t", name, "history-limit", str(TERM_HISTORY_LIMIT))
+    return {"name": name}
+
+
+@app.delete("/api/terminal/sessions/{name}")
+def terminal_session_kill(name: str):
+    if not TERM_SESSION_NAME_RE.match(name):
+        raise HTTPException(400, "잘못된 세션 이름")
+    if not _web_terminal_available():
+        raise HTTPException(501, "웹 터미널은 Linux에서만 지원합니다")
+    rc, _out, _err = _sudo_tmux("kill-session", "-t", name)
+    return {"ok": rc == 0}
+
+
+@app.websocket("/ws/terminal/{name}")
+async def terminal_websocket(ws: WebSocket, name: str, cols: int = 0, rows: int = 0):
+    # cols/rows: 클라이언트(xterm)의 최종 크기를 붙기 전에 알려줘서 pty를 그
+    # 크기로 만든다. attach 이후 resize가 오면 tmux가 화면을 지워버리기 때문.
+    if IS_WINDOWS or not TERM_SESSION_NAME_RE.match(name):
+        await ws.accept()
+        await ws.close(code=1009)
+        return
+    await ws.accept()
+
+    rc, _out, _err = _sudo_tmux("has-session", "-t", name)
+    if rc != 0:
+        await ws.send_text(json.dumps({"type": "err", "message": f"세션 '{name}' 이 없습니다(종료되었거나 서버가 재부팅됨)"}))
+        await ws.close(code=1000)
+        return
+    _sudo_tmux("set-option", "-t", name, "history-limit", str(TERM_HISTORY_LIMIT))
+
+    loop = asyncio.get_running_loop()
+    master, slave = pty.openpty()
+    os.set_blocking(master, False)
+    init_rows = min(max(int(rows or 0), 1), 500) or 50
+    init_cols = min(max(int(cols or 0), 1), 500) or 200
+    fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", init_rows, init_cols, 0, 0))
+    # systemd user 서비스 환경은 TERM=dumb 이라 tmux attach가 거부한다.
+    # 브라우저 쪽(xterm.js)은 xterm-256color 터미널이다.
+    attach_env = dict(os.environ)
+    attach_env["TERM"] = "xterm-256color"
+    proc = subprocess.Popen(
+        ["sudo", "-n", "tmux", "attach-session", "-t", name],
+        stdin=slave, stdout=slave, stderr=slave, close_fds=True, env=attach_env,
+    )
+    os.close(slave)
+
+    in_buf = bytearray()
+    writer_armed = False
+
+    def drain():
+        nonlocal in_buf, writer_armed
+        if not in_buf:
+            writer_armed = False
+            try:
+                loop.remove_writer(drain)
+            except Exception:
+                pass
+            return
+        try:
+            n = os.write(master, bytes(in_buf))
+            del in_buf[:n]
+        except (BlockingIOError, InterruptedError):
+            return  # 다음 이벤트에서 재시도
+        except OSError:
+            in_buf.clear()
+        if not in_buf:
+            writer_armed = False
+            try:
+                loop.remove_writer(drain)
+            except Exception:
+                pass
+
+    def on_read():
+        try:
+            data = os.read(master, 65536)
+        except (BlockingIOError, InterruptedError):
+            return
+        except OSError:
+            data = b""
+        if data:
+            async def pump():
+                try:
+                    await ws.send_bytes(data)
+                except Exception:
+                    pass
+            loop.create_task(pump())
+        else:
+            async def notify_close():
+                try:
+                    await ws.send_text(json.dumps({"type": "closed"}))
+                    await ws.close(code=1000)
+                except Exception:
+                    pass
+            loop.create_task(notify_close())
+
+    try:
+        loop.add_reader(master, on_read)
+        while True:
+            message = await ws.receive()
+            if message.get("type") == "websocket.disconnect":
+                break
+            if message.get("bytes") is not None:
+                in_buf.extend(message["bytes"])
+                if not writer_armed and in_buf:
+                    writer_armed = True
+                    loop.add_writer(master, drain)
+                    drain()
+            elif message.get("text") is not None:
+                try:
+                    msg = json.loads(message["text"])
+                except ValueError:
+                    continue
+                if msg.get("type") == "resize":
+                    try:
+                        rows = min(max(int(msg.get("rows") or 24), 1), 500)
+                        cols = min(max(int(msg.get("cols") or 80), 1), 500)
+                        fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+                    except (ValueError, OSError):
+                        continue
+    except Exception:
+        pass
+    finally:
+        for cleanup in (lambda: loop.remove_reader(master), lambda: loop.remove_writer(master)):
+            try:
+                cleanup()
+            except Exception:
+                pass
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except Exception:
+            proc.kill()
+        try:
+            os.close(master)
+        except OSError:
+            pass
+        try:
+            await ws.close(code=1000)
+        except Exception:
+            pass
 
 
 @app.get("/api/last_run")
