@@ -95,7 +95,7 @@ def status() -> dict[str, Any]:
         },
         "gpu_services": {
             "label": "GPU·팬 부팅 설정", "applied": _systemctl("is-enabled", "gpu-tune.service"),
-            "detail": "GPU 전력/클럭 및 nct6775 메인보드 팬",
+            "detail": "GPU 전력/클럭, CMP 170HX 170tune 재적용(170tune-apply) 및 nct6775 메인보드 팬",
         },
     }
     return {

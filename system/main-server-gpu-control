@@ -58,7 +58,17 @@ write_config() {
 
 apply_one() {
   local selector=$1
-  load_config "$selector"; validate
+  load_config "$selector"
+  # The 170tune method owns this card's clock control: its boot re-apply
+  # (170tune-apply.service) handles it, and re-applying the nvidia-smi lock
+  # here would fight the SM VF offset. Skip until the UI method flips back.
+  if [ -r "/etc/main-server/170tune.d/$GPU_UUID.conf" ] \
+     && grep -q '^METHOD=170tune$' "/etc/main-server/170tune.d/$GPU_UUID.conf" \
+     && grep -q '^TUNE_ENABLED=1$' "/etc/main-server/170tune.d/$GPU_UUID.conf"; then
+    echo "GPU $GPU_INDEX ($GPU_UUID): 170tune 방식이 활성화 중 — nvidia-smi 재적용 건너뜀"
+    return 0
+  fi
+  validate
   if (( ! TUNING_ENABLED )); then
     echo "GPU $GPU_INDEX ($GPU_UUID): 저장 설정 비활성화 — 건너뜀"
     return 0

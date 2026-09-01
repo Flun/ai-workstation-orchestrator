@@ -1,5 +1,4 @@
 import glob
-import hashlib
 import json
 import os
 import platform
@@ -8,8 +7,6 @@ import shlex
 import shutil
 import subprocess
 import sys
-import tarfile
-import tempfile
 import threading
 import time
 import zipfile
@@ -43,9 +40,6 @@ from motherboard_fan import (
 import pawnio_bootstrap
 from comfy_model_paths import ModelPathError, ensure_model_config
 import cmp170_service
-import cmp170tune
-import vram_arbiter
-from vram_arbiter import router as gpu_arbiter_router, proxy_router as gpu_arbiter_proxy_router
 
 HOST = "0.0.0.0"
 PORT = 8999
@@ -62,22 +56,14 @@ LLAMA_SETTINGS_FILE = os.path.join(
 )
 LEGACY_LLAMA_SETTINGS_FILE = os.path.join(BASE_DIR, "llama_settings.json")
 LLAMA_PORT = int(settings.get("llama_port") or 8080)
-_deepseek_harness_launch_url_cache = ""
-_deepseek_harness_tailscale_url_cache = ""
-_deepseek_harness_install_lock = threading.Lock()
-_deepseek_harness_install_state = {"installing": False, "message": "", "error": ""}
 
 services = {
     "comfyui": Service("comfyui"),
-    # 두 번째 ComfyUI 인스턴스. 같은 설치 폴더를 공유하지만 별도 포트와
-    # --user-directory로 격리되어 물리 GPU를 달리 잡아 동시 실행할 수 있습니다.
-    "comfyui_gpu1": Service("comfyui_gpu1"),
     "llama": Service("llama"),
     "bot": Service("bot"),
     "watcher": Service("watcher"),
     "vllm": vllm_service,
     "unsloth": Service("unsloth"),
-    "deepseek_harness": Service("deepseek_harness"),
 }
 
 STARTED_AT = time.time()
@@ -133,8 +119,6 @@ app.include_router(dataset_router)
 app.include_router(vast_router)
 app.include_router(infrastructure_router)
 app.include_router(os_boot_router)
-app.include_router(gpu_arbiter_router)
-app.include_router(gpu_arbiter_proxy_router)
 
 
 # ---------- 유틸 ----------
@@ -262,89 +246,11 @@ def save_presets(presets):
     _write_json(PRESETS_FILE, presets)
 
 
-# ---------- ComfyUI 다중 인스턴스 ----------
-# "main"은 파일 최상위 키를, 그 외 인스턴스는 instances.<key> 아래에 설정을
-# 저장합니다. 기존 단일 인스턴스 파일은 그대로 "main"으로 인식됩니다.
-COMFY_INSTANCES = ("main", "gpu1")
-COMFY_SERVICE_BY_INSTANCE = {"main": "comfyui", "gpu1": "comfyui_gpu1"}
-COMFY_INSTANCE_LABELS = {
-    "main": "ComfyUI · 메인(GPU0)",
-    "gpu1": "ComfyUI · 보조(GPU1)",
-}
+def load_comfy_settings():
+    return _read_json(COMYFUI_SETTINGS_FILE, {})
 
 
-def _comfy_instance(value):
-    instance = str(value or "main").strip() or "main"
-    if instance not in COMFY_INSTANCES:
-        raise HTTPException(400, f"알 수 없는 ComfyUI 인스턴스입니다: {instance}")
-    return instance
-
-
-def _comfy_service_name(instance):
-    return COMFY_SERVICE_BY_INSTANCE[_comfy_instance(instance)]
-
-
-def _comfy_port(instance="main"):
-    instance = _comfy_instance(instance)
-    if instance == "main":
-        raw = settings.get("comfyui_port") or 8188
-    else:
-        raw = settings.get(f"comfyui_port_{instance}") or 8189
-    try:
-        port = int(raw)
-    except (TypeError, ValueError):
-        raise HTTPException(400, f"ComfyUI 포트 값이 잘못되었습니다: {raw}")
-    if not 1 <= port <= 65535:
-        raise HTTPException(400, f"ComfyUI 포트 범위를 벗어났습니다: {port}")
-    return port
-
-
-def _comfy_ports_by_instance():
-    return {instance: _comfy_port(instance) for instance in COMFY_INSTANCES}
-
-
-def _comfy_user_dir(comfy_dir, instance="main"):
-    """인스턴스별 user 디렉터리.
-
-    ComfyUI는 user/ 아래에 워크플로우·에셋 DB·설정·세션을 둡니다. 두 인스턴스가
-    같은 user 폴더를 열면 SQLite 잠금과 설정 덮어쓰기가 발생하므로 반드시 분리합니다.
-    """
-    instance = _comfy_instance(instance)
-    if instance == "main":
-        return os.path.join(comfy_dir, "user")
-    path = os.path.join(comfy_dir, f"user-{instance}")
-    try:
-        os.makedirs(path, exist_ok=True)
-    except OSError as error:
-        raise HTTPException(400, f"ComfyUI 사용자 폴더를 만들 수 없습니다: {error}") from error
-    return path
-
-
-def _comfy_validate_ports(instance):
-    """시작하려는 인스턴스의 포트가 다른 ComfyUI 인스턴스와 겹치지 않는지 확인."""
-    port = _comfy_port(instance)
-    for other in COMFY_INSTANCES:
-        if other != instance and _comfy_port(other) == port:
-            raise HTTPException(
-                400,
-                f"ComfyUI 포트가 겹칩니다: {COMFY_INSTANCE_LABELS[instance]}과(와) "
-                f"{COMFY_INSTANCE_LABELS[other]} 모두 {port}입니다. 설정에서 다른 포트로 바꿔 주세요.",
-            )
-    return port
-
-
-def load_comfy_settings(instance="main"):
-    instance = _comfy_instance(instance)
-    raw = _read_json(COMYFUI_SETTINGS_FILE, {})
-    if not isinstance(raw, dict):
-        raw = {}
-    # main은 후방 호환을 위해 최상위 키를 그대로 사용합니다.
-    stored = raw if instance == "main" else (raw.get("instances") or {}).get(instance, {})
-    return stored if isinstance(stored, dict) else {}
-
-
-def save_comfy_settings(data, instance="main"):
-    instance = _comfy_instance(instance)
+def save_comfy_settings(data):
     merged = {
         "listen": True,
         "use_sage_attention": True,
@@ -361,8 +267,8 @@ def save_comfy_settings(data, instance="main"):
         "gpu_device": "",
         "custom_args": "",
     }
-    existing = load_comfy_settings(instance)
-    if instance == "main" and "reserve_vram_enabled" not in existing and "reserve_vram_1" in existing:
+    existing = load_comfy_settings()
+    if "reserve_vram_enabled" not in existing and "reserve_vram_1" in existing:
         existing["reserve_vram_enabled"] = bool(existing.get("reserve_vram_1"))
         existing["reserve_vram"] = 1.0
     merged.update({k: existing[k] for k in merged if k in existing})
@@ -383,18 +289,7 @@ def save_comfy_settings(data, instance="main"):
         custom_args = str(data.get("custom_args") or "").strip()
         _parse_comfy_custom_args(custom_args)
         merged["custom_args"] = custom_args
-    if instance == "main":
-        # instances.* 등 알 수 없는 키를 지우지 않도록 기존 내용을 유지합니다.
-        raw = _read_json(COMYFUI_SETTINGS_FILE, {})
-        out = dict(raw) if isinstance(raw, dict) else {}
-        out.update(merged)
-    else:
-        raw = _read_json(COMYFUI_SETTINGS_FILE, {})
-        out = dict(raw) if isinstance(raw, dict) else {}
-        instances = dict(raw.get("instances") or {}) if isinstance(raw, dict) else {}
-        instances[instance] = merged
-        out["instances"] = instances
-    _write_json(COMYFUI_SETTINGS_FILE, out)
+    _write_json(COMYFUI_SETTINGS_FILE, merged)
     return merged
 
 
@@ -425,18 +320,6 @@ def _parse_comfy_custom_args(value):
             ctypes.windll.kernel32.LocalFree(arguments)
     except ValueError as error:
         raise HTTPException(400, f"ComfyUI 사용자 인자 구문 오류: {error}") from error
-
-
-def _parse_llama_custom_args(value):
-    """llama.cpp 수동 인자를 argv로 분리한다. 저장 시점과 실행 시점 모두에서 검증."""
-    try:
-        args = _parse_comfy_custom_args(value)
-    except HTTPException as error:
-        raise HTTPException(400, str(error.detail).replace("ComfyUI", "llama.cpp")) from error
-    for arg in args:
-        if arg in {"-m", "--model"} or arg.startswith("--model="):
-            raise HTTPException(400, "수동 인자에는 -m/--model 을 쓸 수 없습니다. 위 모델 선택을 사용하세요")
-    return args
 
 
 def normalize_gpu_devices(value):
@@ -474,30 +357,16 @@ def load_llama_settings():
         data = _read_json(LEGACY_LLAMA_SETTINGS_FILE, {})
     return {
         "model_root": normalize_model_root(data.get("model_root", settings.get("model_root"))),
-        # 수동 인자와 --tensor-read-lazy 는 서버 파일에 저장되므로 재시작/타 PC 접속 후에도 유지된다.
-        "custom_args": str(data.get("custom_args") or ""),
-        "tensor_read_lazy": str(data.get("tensor_read_lazy") or "auto"),
     }
 
 
 def save_llama_settings(values):
-    # 없는 키는 기존값을 유지한다. model_root 저장과 수동 인자 저장이 서로를 지우지 않도록
-    # 항상 현재 값을 출발점으로 병합한다.
-    saved = load_llama_settings()
-    if "model_root" in values:
-        model_root = normalize_model_root(values.get("model_root"))
-        if not os.path.isdir(model_root):
-            raise HTTPException(400, f"Model root 폴더가 없습니다: {model_root}")
-        saved["model_root"] = model_root
-    if "custom_args" in values:
-        custom_args = str(values.get("custom_args") or "").strip()
-        _parse_llama_custom_args(custom_args)
-        saved["custom_args"] = custom_args
-    if "tensor_read_lazy" in values:
-        mode = str(values.get("tensor_read_lazy") or "auto").strip().lower()
-        if mode not in {"auto", "on", "off"}:
-            raise HTTPException(400, "--tensor-read-lazy 값은 auto/on/off 중 하나여야 합니다")
-        saved["tensor_read_lazy"] = mode
+    model_root = normalize_model_root(values.get("model_root"))
+    if not os.path.isdir(model_root):
+        raise HTTPException(400, f"Model root 폴더가 없습니다: {model_root}")
+    saved = {
+        "model_root": model_root,
+    }
     _write_json(LLAMA_SETTINGS_FILE, saved)
     return saved
 
@@ -638,131 +507,10 @@ def _llama_port_value(preset):
     return value
 
 
-def _llama_wants_router(preset):
-    """라우터 모드로 실행할지 판단한다.
-
-    세 조건을 모두 만족해야 한다: (1) 설정 토글 ON, (2) 해당 바이너리가 router 지원,
-    (3) Arbiter 가 실제로 켜진 GPU 가 존재. 관리 대상 GPU가 없는데 라우터로 띄울
-    이유가 없으므로, 그때는 기존 단일 모델 모드를 그대로 사용한다.
-    """
-    if not bool(vram_arbiter.arbiter.setting("llama_router_enabled", True)):
-        return False
-    exe, _ = _resolve_llama_binary(preset)
-    if not exe or not vram_arbiter.llama_binary_features(exe).get("router"):
-        return False
-    arbiter = vram_arbiter.arbiter
-    if not arbiter.pools:
-        arbiter.ensure_pools()
-    return any(pool.enabled for pool in arbiter.pools.values())
-
-
-def _llama_common_args(preset):
-    """라우터 CLI 공통 인자.
-
-    라우터의 자기 CLI 인자는 모든 자식 모델 preset 에 overlay 된다
-    (server-models.cpp load_models 의 preset.merge(base_preset)). 그래서 ctx/flash/ngl
-    등을 라우터 커맨드에 적으면 INI 에 이중으로 적지 않아도 자식 모델에 적용된다.
-    -m/--mmproj/--alias/--host/--port 는 라우터가 자식에게 직접 주입하므로 제외한다.
-    """
-    legacy = preset.get("optionalArgs") if isinstance(preset.get("optionalArgs"), dict) else {}
-
-    def value(key, default=""):
-        current = preset.get(key, legacy.get(key, default))
-        return str(current if current is not None else "").strip()
-
-    def enabled(key, default=False):
-        current = preset.get(key, legacy.get(key, default))
-        if isinstance(current, str):
-            return current.strip().lower() in {"1", "true", "yes", "on"}
-        return bool(current)
-
-    cmd = []
-    for flag, key in (("--ctx-size", "ctx"), ("-ngl", "ngl"), ("-n", "nPredict"),
-                      ("-np", "parallel"), ("-t", "threads"), ("-ctk", "cacheK"), ("-ctv", "cacheV")):
-        current = value(key)
-        if current:
-            cmd += [flag, current]
-    reasoning_mode = str(preset.get("reasoningMode", "")).strip()
-    if reasoning_mode in {"on", "off"}:
-        cmd += ["--reasoning", reasoning_mode]
-    budget = str(preset.get("reasoningBudget", "")).strip()
-    if reasoning_mode != "off" and budget:
-        cmd += ["--reasoning-budget", budget]
-    if enabled("fit"):
-        cmd += ["--fit", "on"]
-        target = value("fitTarget")
-        if target:
-            cmd += ["--fit-target", target]
-    else:
-        cmd += ["--fit", "off"]
-    batch_size, ubatch_size = value("batchSize"), value("ubatchSize")
-    if batch_size and ubatch_size:
-        try:
-            if int(ubatch_size) > int(batch_size):
-                raise HTTPException(400, "ubatch size는 batch size보다 클 수 없습니다")
-        except ValueError:
-            raise HTTPException(400, "batch size와 ubatch size는 정수여야 합니다") from None
-    for flag, key in (("--batch-size", "batchSize"), ("--ubatch-size", "ubatchSize"),
-                      ("--threads-batch", "threadsBatch"), ("--ctx-checkpoints", "ctxCheckpoints"),
-                      ("--cache-ram", "cacheRam"), ("--cache-reuse", "cacheReuse")):
-        current = value(key)
-        if current:
-            cmd += [flag, current]
-    for flag, key in (("--split-mode", "splitMode"), ("--tensor-split", "tensorSplit"),
-                      ("--main-gpu", "mainGpu")):
-        current = value(key)
-        if current:
-            cmd += [flag, current]
-    if enabled("cpuMoe"):
-        cmd.append("--cpu-moe")
-    elif value("cpuMoeLayers"):
-        cmd += ["--n-cpu-moe", value("cpuMoeLayers")]
-    lazy = value("tensorReadLazy")
-    if lazy and lazy != "auto":
-        if lazy not in {"on", "off"}:
-            raise HTTPException(400, "--tensor-read-lazy 값은 on/off 중 하나여야 합니다")
-        cmd += ["--tensor-read-lazy", lazy]
-    if enabled("flash"):
-        cmd += ["--flash-attn", "on"]
-    return cmd
-
-
-def _build_llama_router_cmd(preset, exe):
-    """A안 라우터 커맨드: 모델 1개 + autoload 유지 (--no-models-autoload 미사용).
-
-    * -m/--hf/--docker 를 절대 넘기지 않는다 — server.cpp:135 의 is_router_server 조건.
-    * INI section name 이 곧 canonical 모델명이다. 기존 클라이언트가 보내는 model 값에
-      이름을 맞추고, 다중 alias 는 런타임 검증 전까지 쓰지 않는다.
-    * ACTIVE 보호와 contention 시 unload 은 Arbiter 쪽에서 담당한다.
-    """
-    model = str(preset.get("model", "")).strip()
-    if not model or not os.path.isfile(model):
-        raise HTTPException(400, f"모델 파일이 없습니다: {model}")
-    native = bool(vram_arbiter.llama_binary_features(exe).get("default_model"))
-    name = vram_arbiter.router_section_name(model)
-    info = vram_arbiter.write_router_preset(
-        [{"name": name, "model": model,
-          "mmproj": str(preset.get("mmproj", "") or ""),
-          "alias": str(vram_arbiter.arbiter.setting("llama_router_aliases") or ""),
-          "default": True}],
-        native_default_model=native,
-    )
-    cmd = [exe, "--models-preset", info["path"], "--models-max", "1"]
-    # §3: --no-models-autoload 는 붙이지 않는다. unload 후에도 기존 클라이언트 요청만으로
-    # 라우터가 같은 모델을 자동으로 다시 올린다.
-    cmd += _llama_common_args(preset)
-    cmd += ["--port", str(_llama_port_value(preset))]
-    # 수동 인자는 항상 맨 끝 (같은 플래그면 마지막 occurrence 가 우선).
-    cmd += _parse_llama_custom_args(preset.get("customArgs"))
-    return cmd
-
-
 def _build_llama_cmd(preset):
     exe, version_dir = _resolve_llama_binary(preset)
     if not exe:
         raise HTTPException(400, "llama-server 실행 파일을 찾지 못했습니다 (경로 설정 또는 버전 스캔 필요)")
-    if _llama_wants_router(preset):
-        return _build_llama_router_cmd(preset, exe)
     model = preset.get("model", "")
     if not model or not os.path.isfile(model):
         raise HTTPException(400, f"모델 파일이 없습니다: {model}")
@@ -878,16 +626,8 @@ def _build_llama_cmd(preset):
         draft_ngl = value("specDraftNgl")
         if draft_ngl:
             cmd += ["--spec-draft-ngl", draft_ngl]
-    tensor_read_lazy = value("tensorReadLazy")
-    # 구버전 바이너리에는 없는 플래그이므로 auto(미전달)가 안전 기본값이다.
-    if tensor_read_lazy and tensor_read_lazy != "auto":
-        if tensor_read_lazy not in {"on", "off"}:
-            raise HTTPException(400, "--tensor-read-lazy 값은 on/off 중 하나여야 합니다")
-        cmd += ["--tensor-read-lazy", tensor_read_lazy]
     if enabled("flash"):
         cmd += ["--flash-attn", "on"]
-    # 수동 인자는 항상 맨 끝: llama.cpp 는 마지막 occurrence 가 이기 때문에 오버라이드가 된다.
-    cmd += _parse_llama_custom_args(preset.get("customArgs"))
     return cmd
 
 
@@ -921,9 +661,9 @@ def _comfy_env():
     return {"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1", "PYTHONUNBUFFERED": "1"}
 
 
-def _comfy_args(settings_data=None):
+def _comfy_args():
     args = []
-    s = load_comfy_settings() if settings_data is None else settings_data
+    s = load_comfy_settings()
     if s.get("preview_method_none"):
         args += ["--preview-method", "none"]
     if s.get("cache_none"):
@@ -983,308 +723,6 @@ def _unsloth_port():
     if not 1 <= port <= 65535:
         raise HTTPException(400, "Unsloth 포트 범위는 1~65535입니다")
     return port
-
-
-def _deepseek_harness_executable():
-    """Return the configured/global dsh launcher, falling back to official npx."""
-    configured = os.path.expandvars(
-        os.path.expanduser(str(settings.get("deepseek_harness_executable") or "").strip())
-    )
-    candidates = [configured] if configured else []
-    candidates += [shutil.which("dsh"), shutil.which("corepack"), shutil.which("npx")]
-    if IS_WINDOWS:
-        candidates += [shutil.which("dsh.cmd"), shutil.which("corepack.cmd"), shutil.which("npx.cmd")]
-    runtime_root = _deepseek_harness_runtime_root()
-    runtime_pattern = os.path.join(runtime_root, "node-*", "corepack.cmd" if IS_WINDOWS else "bin/corepack")
-    candidates += sorted(glob.glob(runtime_pattern), key=os.path.getmtime, reverse=True)
-    for candidate in candidates:
-        if not candidate:
-            continue
-        if os.path.isabs(candidate) or os.path.dirname(candidate):
-            if os.path.isfile(candidate):
-                return os.path.abspath(candidate)
-            continue
-        resolved = shutil.which(candidate)
-        if resolved:
-            return resolved
-    return None
-
-
-def _deepseek_harness_runtime_root():
-    if IS_WINDOWS:
-        base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
-        return os.path.join(base, "MainServer", "deepseek-harness", "runtime")
-    return os.path.join(os.path.expanduser("~/.local/share"), "main-server", "deepseek-harness", "runtime")
-
-
-def _deepseek_harness_install_log(message):
-    _deepseek_harness_install_state["message"] = str(message)
-    os.makedirs(os.path.dirname(services["deepseek_harness"].log_file), exist_ok=True)
-    with open(services["deepseek_harness"].log_file, "a", encoding="utf-8", errors="replace") as handle:
-        handle.write(f"[auto-install] {message}\n")
-
-
-def _safe_extract_node_archive(archive_path, destination, archive_name):
-    if archive_name.endswith(".zip"):
-        with zipfile.ZipFile(archive_path) as archive:
-            root = os.path.realpath(destination)
-            for member in archive.infolist():
-                target = os.path.realpath(os.path.join(destination, member.filename))
-                if os.path.commonpath((root, target)) != root:
-                    raise RuntimeError("Node.js 압축 파일에 안전하지 않은 경로가 있습니다")
-            archive.extractall(destination)
-        return
-    with tarfile.open(archive_path, "r:xz") as archive:
-        archive.extractall(destination, filter="data")
-
-
-def _install_deepseek_harness_runtime():
-    """Install an official Node.js LTS runtime in user space; Corepack runs dsh on first boot."""
-    existing = _deepseek_harness_executable()
-    if existing:
-        return existing
-    with _deepseek_harness_install_lock:
-        existing = _deepseek_harness_executable()
-        if existing:
-            return existing
-        _deepseek_harness_install_state.update({"installing": True, "message": "Node.js LTS 확인 중", "error": ""})
-        try:
-            machine = platform.machine().lower()
-            arch = "x64" if machine in {"x86_64", "amd64"} else "arm64" if machine in {"aarch64", "arm64"} else ""
-            if not arch:
-                raise RuntimeError(f"자동 설치를 지원하지 않는 CPU 아키텍처입니다: {machine}")
-            system = "win" if IS_WINDOWS else "linux"
-            suffix = "zip" if IS_WINDOWS else "tar.xz"
-            file_tag = f"{system}-{arch}"
-            _deepseek_harness_install_log("Node.js 공식 릴리스 목록 확인 중")
-            response = requests.get("https://nodejs.org/dist/index.json", timeout=20)
-            response.raise_for_status()
-            release = next(
-                (item for item in response.json() if item.get("lts") and file_tag in (item.get("files") or [])),
-                None,
-            )
-            if not release:
-                raise RuntimeError(f"이 플랫폼용 Node.js LTS를 찾지 못했습니다: {file_tag}")
-            version = str(release["version"])
-            archive_name = f"node-{version}-{file_tag}.{suffix}"
-            base_url = f"https://nodejs.org/dist/{version}"
-            checksum_response = requests.get(f"{base_url}/SHASUMS256.txt", timeout=20)
-            checksum_response.raise_for_status()
-            expected = next(
-                (line.split()[0] for line in checksum_response.text.splitlines() if line.split()[-1] == archive_name),
-                "",
-            )
-            if not expected:
-                raise RuntimeError(f"Node.js 체크섬을 찾지 못했습니다: {archive_name}")
-
-            runtime_root = _deepseek_harness_runtime_root()
-            os.makedirs(runtime_root, exist_ok=True)
-            final_dir = os.path.join(runtime_root, archive_name.removesuffix(f".{suffix}"))
-            if not os.path.isdir(final_dir):
-                _deepseek_harness_install_log(f"Node.js {version} 다운로드 중")
-                with tempfile.TemporaryDirectory(prefix="install-", dir=runtime_root) as temp_dir:
-                    archive_path = os.path.join(temp_dir, archive_name)
-                    digest = hashlib.sha256()
-                    with requests.get(f"{base_url}/{archive_name}", stream=True, timeout=(20, 180)) as download:
-                        download.raise_for_status()
-                        with open(archive_path, "wb") as handle:
-                            for chunk in download.iter_content(1024 * 1024):
-                                if chunk:
-                                    digest.update(chunk)
-                                    handle.write(chunk)
-                    if digest.hexdigest().lower() != expected.lower():
-                        raise RuntimeError("Node.js 다운로드 체크섬이 일치하지 않습니다")
-                    _deepseek_harness_install_log("Node.js 압축 해제 중")
-                    extract_dir = os.path.join(temp_dir, "extract")
-                    os.makedirs(extract_dir, exist_ok=True)
-                    _safe_extract_node_archive(archive_path, extract_dir, archive_name)
-                    extracted = os.path.join(extract_dir, archive_name.removesuffix(f".{suffix}"))
-                    if not os.path.isdir(extracted):
-                        raise RuntimeError("Node.js 압축 해제 결과를 찾지 못했습니다")
-                    shutil.move(extracted, final_dir)
-            executable = os.path.join(final_dir, "corepack.cmd" if IS_WINDOWS else "bin/corepack")
-            if not os.path.isfile(executable):
-                raise RuntimeError(f"설치된 Corepack을 찾지 못했습니다: {executable}")
-            if not IS_WINDOWS:
-                os.chmod(executable, os.stat(executable).st_mode | 0o111)
-            _deepseek_harness_install_log("Node.js 준비 완료 · DeepSeek Harness 설치/실행 시작")
-            return executable
-        except Exception as error:
-            _deepseek_harness_install_state["error"] = str(error)
-            _deepseek_harness_install_log(f"설치 실패: {error}")
-            raise
-        finally:
-            _deepseek_harness_install_state["installing"] = False
-
-
-def _deepseek_harness_port():
-    try:
-        port = int(settings.get("deepseek_harness_port") or 3080)
-    except (TypeError, ValueError) as error:
-        raise HTTPException(400, "DeepSeek Harness 포트가 올바르지 않습니다") from error
-    if not 1 <= port <= 65535:
-        raise HTTPException(400, "DeepSeek Harness 포트 범위는 1~65535입니다")
-    return port
-
-
-def _deepseek_harness_command(executable, port):
-    name = os.path.basename(executable).lower()
-    prefix = [executable]
-    if IS_WINDOWS and name.endswith((".cmd", ".bat")):
-        prefix = [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/s", "/c", executable]
-    if name.startswith("corepack"):
-        prefix += [
-            "pnpm", "dlx", "--reporter", "append-only",
-            "--allow-build=@deepseek-ai/dsh-subprocess-local",
-            "--allow-build=@google/genai",
-            "--allow-build=koffi",
-            "--allow-build=node-pty",
-            "--allow-build=protobufjs",
-            "@deepseek-ai/dsh",
-        ]
-    elif name.startswith("npx"):
-        prefix += ["--yes", "@deepseek-ai/dsh"]
-    return prefix + ["web", "--host", "127.0.0.1", "--port", str(port), "--no-open"]
-
-
-def _tailscale_serve_url(port):
-    executable = shutil.which("tailscale")
-    if not executable:
-        return ""
-    result = subprocess.run(
-        [executable, "serve", "status", "--json"],
-        capture_output=True, text=True, timeout=10, creationflags=NO_WINDOW,
-    )
-    if result.returncode:
-        return ""
-    try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return ""
-    target = f"localhost:{port}"
-    for authority, site in (payload.get("Web") or {}).items():
-        for handler in (site.get("Handlers") or {}).values():
-            if str(handler.get("Proxy") or "").removeprefix("http://") == target:
-                return f"https://{authority.removesuffix(':443')}/"
-    return ""
-
-
-def _ensure_deepseek_harness_tailscale(port):
-    global _deepseek_harness_tailscale_url_cache
-    executable = shutil.which("tailscale")
-    if not executable:
-        raise RuntimeError("Tailscale이 설치되어 있지 않습니다")
-    result = subprocess.run(
-        [executable, "serve", "--bg", f"localhost:{port}"],
-        capture_output=True, text=True, timeout=20, creationflags=NO_WINDOW,
-    )
-    if result.returncode:
-        detail = result.stderr.strip() or result.stdout.strip()
-        raise RuntimeError(detail or "Tailscale Serve 연결 실패")
-    url = _tailscale_serve_url(port)
-    if not url:
-        match = re.search(r"https://[^\s/]+/?", result.stdout)
-        url = match.group(0) if match else ""
-    if not url:
-        raise RuntimeError("Tailscale Serve URL을 확인하지 못했습니다")
-    # The first Serve activation provisions a TLS certificate asynchronously.
-    # Do not redirect the browser until HTTPS and the loopback proxy are live.
-    deadline = time.monotonic() + 45
-    last_error = ""
-    while time.monotonic() < deadline:
-        try:
-            response = requests.get(url, timeout=3)
-            if response.status_code < 500:
-                break
-            last_error = f"HTTP {response.status_code}"
-        except requests.RequestException as error:
-            last_error = str(error)
-        time.sleep(0.5)
-    else:
-        raise RuntimeError(f"Tailscale HTTPS 준비 시간 초과: {last_error}")
-    _deepseek_harness_tailscale_url_cache = url
-    return url
-
-
-def _deepseek_harness_launch_url():
-    global _deepseek_harness_launch_url_cache
-    # dsh prints the one-time launch token only after the complete Web tree is ready.
-    pattern = re.compile(r"dsh web:\s+(http://127\.0\.0\.1:\d+(?:/\?token=[^\s(]+)?)")
-    for line in reversed(tail(services["deepseek_harness"].log_file, 2000)):
-        match = pattern.search(line)
-        if match:
-            _deepseek_harness_launch_url_cache = match.group(1)
-            return _deepseek_harness_launch_url_cache
-        if line.startswith("=====") and "시작:" in line:
-            break
-    return _deepseek_harness_launch_url_cache
-
-
-def _deepseek_harness_external_pids():
-    """Find real dsh Web argv pairs without matching shell/editor text."""
-    found = []
-    for proc in psutil.process_iter(["pid", "cmdline"]):
-        try:
-            argv = [str(item) for item in (proc.info.get("cmdline") or [])]
-        except (psutil.AccessDenied, psutil.ZombieProcess, psutil.NoSuchProcess):
-            continue
-        for index, token in enumerate(argv[:-1]):
-            normalized = token.replace("\\", "/").lower()
-            name = os.path.basename(normalized)
-            launcher = name in {"dsh", "dsh.cmd", "dsh.exe"} or "@deepseek-ai/dsh" in normalized
-            if launcher and argv[index + 1].lower() == "web":
-                found.append(proc.pid)
-                break
-    return found
-
-
-def _terminate_deepseek_harness_processes(force=False):
-    """Stop every managed or externally detected dsh Web process tree.
-
-    A pnpm/corepack launcher can survive a manager restart without a pidfile.
-    In that state Service.stop()/force_kill() cannot see it, so collect both
-    the pidfile owner and argv-detected dsh processes plus all descendants.
-    """
-    service = services["deepseek_harness"]
-    roots = set(_deepseek_harness_external_pids())
-    managed_pid = service.read_pidfile()
-    if managed_pid and service._pid_alive(managed_pid):
-        roots.add(managed_pid)
-
-    targets = {}
-    for pid in roots:
-        try:
-            proc = psutil.Process(pid)
-            targets[proc.pid] = proc
-            for child in proc.children(recursive=True):
-                targets[child.pid] = child
-        except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
-            continue
-
-    signal_method = "kill" if force else "terminate"
-    for proc in sorted(targets.values(), key=lambda item: item.pid, reverse=True):
-        try:
-            getattr(proc, signal_method)()
-        except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
-            pass
-
-    if targets:
-        _, alive = psutil.wait_procs(list(targets.values()), timeout=0 if force else 3)
-        for proc in alive:
-            try:
-                proc.kill()
-            except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
-                pass
-        if alive:
-            psutil.wait_procs(alive, timeout=2)
-
-    try:
-        os.remove(service._pidfile)
-    except OSError:
-        pass
-    service.pid = None
-    service.started_at = None
-    return bool(targets)
 
 
 # ---------- 하드웨어 샘플러 ----------
@@ -1429,15 +867,7 @@ def _start_sampler_once():
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    # 다른 페이지들과 동일하게 no-store: 수정한 대시보드 HTML이 브라우저 캐시로
-    # 되살아나 UI가 바뀌지 않은 것처럼 보이는 문제를 막습니다.
-    return FileResponse(
-        os.path.join(BASE_DIR, "index.html"),
-        headers={
-            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-            "Pragma": "no-cache",
-        },
-    )
+    return FileResponse(os.path.join(BASE_DIR, "index.html"))
 
 
 @app.get("/models")
@@ -1516,58 +946,6 @@ def _pid_in_dir(pid, dir_path):
         return False
 
 
-def _comfy_instance_of_cmdline(command, ports_by_instance):
-    """cmdline이 어느 ComfyUI 인스턴스의 것인지 판별합니다 (없으면 None).
-
-    --user-directory의 user-<key>를 우선 보고, 그다음이 포트 매칭입니다. 메인
-    인스턴스는 기본(user/, 기본 포트)을 쓰기 때문에 명시적 표식이 없으면 main으로
-    취급됩니다.
-    """
-    lowered = str(command or "").lower()
-    match = re.search(r"--user-directory[= ]+[^\s]*user-([a-z0-9_]+)", lowered)
-    if match and match.group(1) in COMFY_INSTANCES and match.group(1) != "main":
-        return match.group(1)
-    port_match = re.search(r"--port[= ]+(\d+)", lowered)
-    if port_match:
-        port = int(port_match.group(1))
-        for instance, configured_port in ports_by_instance.items():
-            if port == configured_port and instance != "main":
-                return instance
-    return None
-
-
-def _comfy_external_pids(instance="main"):
-    """pidfile 없이 실행 중인 ComfyUI를 인스턴스별로 배정합니다.
-
-    예전에는 'main.py + ComfyUI 폴더' 조건만 봐서 보조 인스턴스만 떠 있어도 메인
-    버튼이 Stop으로 고착됐습니다. 이제 포트/user-directory로 소유자를 가립니다.
-    """
-    instance = _comfy_instance(instance)
-    comfy_dir = settings.get("comfyui_dir")
-    if not comfy_dir:
-        return []
-    pids = [pid for pid in find_process(r"main\.py") if _pid_in_dir(pid, comfy_dir)]
-    if not pids:
-        return []
-
-    ports_by_instance = {}
-    for candidate in COMFY_INSTANCES:
-        try:
-            ports_by_instance[candidate] = _comfy_port(candidate)
-        except HTTPException:
-            continue
-
-    result = []
-    for pid in pids:
-        try:
-            command = " ".join(psutil.Process(pid).cmdline() or [])
-        except Exception:
-            command = ""
-        if _comfy_instance_of_cmdline(command, ports_by_instance) == instance:
-            result.append(pid)
-    return result
-
-
 def _service_state(name):
     svc = services[name]
     st = svc.info()
@@ -1577,9 +955,11 @@ def _service_state(name):
             st["running"] = True
             st["pid"] = pids[0]
             st["external"] = True
-    if name in ("comfyui", "comfyui_gpu1") and not st["running"]:
-        instance = "main" if name == "comfyui" else "gpu1"
-        pids = _comfy_external_pids(instance)
+    if name == "comfyui" and not st["running"]:
+        pids = find_process(r"main\.py")
+        comfy_dir = settings.get("comfyui_dir")
+        if comfy_dir:
+            pids = [p for p in pids if _pid_in_dir(p, comfy_dir)]
         if pids:
             st["running"] = True
             st["pid"] = pids[0]
@@ -1599,53 +979,7 @@ def _service_state(name):
                 st["running"] = True
                 st["pid"] = pids[0]
                 st["external"] = True
-    if name == "deepseek_harness":
-        global _deepseek_harness_tailscale_url_cache
-        executable = _deepseek_harness_executable()
-        port = _deepseek_harness_port()
-        loopback_url = _deepseek_harness_launch_url() if st["running"] else ""
-        if st["running"] and not _deepseek_harness_tailscale_url_cache:
-            _deepseek_harness_tailscale_url_cache = _tailscale_serve_url(port)
-        launch_url = _deepseek_harness_tailscale_url_cache if st["running"] else ""
-        preparing = bool(st["running"] and not launch_url)
-        st.update({
-            "available": bool(executable),
-            "port": port,
-            "launch_url": launch_url,
-            "ready": bool(launch_url),
-            "tailscale": bool(launch_url),
-            "installing": bool(_deepseek_harness_install_state["installing"]),
-            "install_message": (
-                _deepseek_harness_install_state["message"]
-                or ("DeepSeek Harness 패키지 설치 또는 초기화 중" if preparing else "")
-            ),
-            "install_error": _deepseek_harness_install_state["error"],
-        })
-        if not st["running"]:
-            pids = _deepseek_harness_external_pids()
-            if pids:
-                st["running"] = True
-                st["pid"] = pids[0]
-                st["external"] = True
-                st["launch_url"] = _deepseek_harness_launch_url()
     return st
-
-
-def _comfy_instances_payload():
-    """프론트가 인스턴스별 카드/버튼을 렌더링하는 데 쓰는 요약 정보."""
-    payload = {}
-    for instance in COMFY_INSTANCES:
-        try:
-            port = _comfy_port(instance)
-        except HTTPException as error:
-            port = {"error": str(error.detail)}
-        payload[instance] = {
-            "key": instance,
-            "label": COMFY_INSTANCE_LABELS[instance],
-            "service": COMFY_SERVICE_BY_INSTANCE[instance],
-            "port": port,
-        }
-    return payload
 
 
 @app.get("/api/status")
@@ -1660,7 +994,6 @@ def status():
         "hostname": os.uname().nodename if hasattr(os, "uname") else os.environ.get("COMPUTERNAME", ""),
         "server_uptime": round(time.time() - STARTED_AT),
         "services": {k: _service_state(k) for k in services},
-        "comfy_instances": _comfy_instances_payload(),
         "gpus": STATE["hw"]["gpus"],
         "llama_versions": STATE["llama_versions"],
         "gguf_models": STATE["gguf_models"],
@@ -1685,12 +1018,10 @@ def gpus():
         values = value.split(",") if isinstance(value, str) else value
         return list(dict.fromkeys(str(item).strip() for item in values if str(item).strip()))
 
-    comfy_saved = load_comfy_settings("main")
-    comfy_gpu1_saved = load_comfy_settings("gpu1")
+    comfy_saved = load_comfy_settings()
     last_run = _read_json(LAST_RUN_FILE, {})
     configured = {
         "comfyui": configured_devices([comfy_saved.get("gpu_device")]),
-        "comfyui_gpu1": configured_devices([comfy_gpu1_saved.get("gpu_device")]),
         "llama": configured_devices(last_run.get("gpuDevices") or last_run.get("device") or []),
         "bot": configured_devices(services["bot"].device or []),
         "watcher": configured_devices(services["watcher"].device or []),
@@ -1698,8 +1029,7 @@ def gpus():
         "unsloth": configured_devices(services["unsloth"].device or []),
     }
     service_defs = {
-            "comfyui": {"label": "ComfyUI(메인)", "color": "amber"},
-            "comfyui_gpu1": {"label": "ComfyUI(보조 GPU1)", "color": "orange"},
+            "comfyui": {"label": "ComfyUI", "color": "amber"},
             "llama": {"label": "llama.cpp", "color": "sky"},
             "bot": {"label": "봇", "color": "emerald"},
             "watcher": {"label": "와처", "color": "violet"},
@@ -1725,9 +1055,6 @@ def gpus():
         "configured_devices": [], "active_gpu_indexes": [],
         "vram_used_gb": round(system_mb / 1024, 2), "running": True,
     }
-    # VRAM Arbiter 상태는 NVML을 다시 읽지 않는 캐시 스냅샷입니다. 이미 이 엔드포인트를
-    # 폴링하는 대시보드에 얹기 위해 새 요청이나 폴링 주기는 필요 없습니다.
-    topo["arbiter"] = vram_arbiter.arbiter.summary()
     return topo
 
 
@@ -1863,7 +1190,6 @@ def llama_start(preset: dict):
         LAST_RUN_FILE,
         {"version": _resolve_llama_binary(effective)[1] or "", **effective, "gpuDevices": devices, "device": ""},
     )
-    threading.Thread(target=lambda: vram_arbiter.arbiter.reconcile("llama-start"), daemon=True).start()
     return {
         "ok": True,
         "pid": pid,
@@ -2707,9 +2033,12 @@ def llama_model_download(url: str = "", name: str = ""):
 
 # ---------- ComfyUI ----------
 
-def _comfy_start_internal(instance="main", data=None):
-    instance = _comfy_instance(instance)
-    saved = save_comfy_settings(data or {}, instance)
+@app.post("/api/comfy/start")
+def comfy_start(data: dict | None = None):
+    if data:
+        saved = save_comfy_settings(data)
+    else:
+        saved = save_comfy_settings({})
     comfy_dir = settings.get("comfyui_dir")
     if not comfy_dir or not os.path.isdir(comfy_dir):
         raise HTTPException(400, f"ComfyUI 폴더가 없습니다: {comfy_dir}")
@@ -2720,86 +2049,36 @@ def _comfy_start_internal(instance="main", data=None):
     except ModelPathError as error:
         raise HTTPException(400, str(error)) from error
     settings.save({"comfyui_model_root": str(resolved_model_root)})
-
-    port = _comfy_validate_ports(instance)
     cmd = [
         _comfy_python(),
         "main.py",
         "--port",
-        str(port),
-        # 인스턴스별로 user/ 폴더를 분리합니다. 같은 폴더를 두 프로세스가 열면
-        # 워크플로우 저장과 에셋 DB(SQLite)에서 충돌이 발생합니다.
-        "--user-directory",
-        _comfy_user_dir(comfy_dir, instance),
+        str(settings.get("comfyui_port")),
         "--extra-model-paths-config",
         str(model_config),
     ]
     if saved.get("listen"):
         cmd += ["--listen", "0.0.0.0"]
-    cmd += _comfy_args(saved)
-
+    cmd += _comfy_args()
     devices = normalize_gpu_devices([saved.get("gpu_device")]) if saved.get("gpu_device") else []
-    pid = services[_comfy_service_name(instance)].start(
-        cmd, cwd=comfy_dir, env=_comfy_env(), device=devices or None,
-    )
-    threading.Thread(target=lambda: vram_arbiter.arbiter.reconcile("comfy-start"), daemon=True).start()
-    return {
-        "ok": True, "pid": pid, "cmd": cmd, "instance": instance,
-        "label": COMFY_INSTANCE_LABELS[instance], "port": port, "gpu_devices": devices,
-    }
-
-
-@app.post("/api/comfy/start")
-def comfy_start(data: dict | None = None):
-    data = data or {}
-    return _comfy_start_internal(data.get("instance", "main"), data)
+    pid = services["comfyui"].start(cmd, cwd=comfy_dir, env=_comfy_env(), device=devices or None)
+    return {"ok": True, "pid": pid, "cmd": cmd, "gpu_devices": devices}
 
 
 @app.post("/api/comfy/stop")
-async def comfy_stop(request: Request):
+def comfy_stop(request: Request):
     _require_comfy_confirmation(request)
-    content_type = request.headers.get("content-type") or ""
-    body = await request.json() if content_type.startswith("application/json") else {}
-    instance = (body or {}).get("instance") or request.query_params.get("instance")
-    instance = _comfy_instance(instance)
-    return {"ok": services[_comfy_service_name(instance)].stop(), "instance": instance}
+    return {"ok": services["comfyui"].stop()}
 
 
 @app.get("/api/comfy/settings")
-def comfy_settings_get(instance: str = "main"):
-    inst = _comfy_instance(instance)
-    payload = dict(load_comfy_settings(inst))
-    payload.update({"instance": inst, "label": COMFY_INSTANCE_LABELS[inst], "port": _comfy_port(inst)})
-    return payload
+def comfy_settings_get():
+    return save_comfy_settings({})
 
 
 @app.post("/api/comfy/settings")
 def comfy_settings_save(data: dict):
-    data = data or {}
-    inst = _comfy_instance(data.get("instance"))
-    payload = dict(save_comfy_settings(data, inst))
-    payload.update({"instance": inst, "label": COMFY_INSTANCE_LABELS[inst], "port": _comfy_port(inst)})
-    return payload
-
-
-@app.get("/api/comfy/instances")
-def comfy_instances():
-    """모든 ComfyUI 인스턴스의 상태·설정을 한 번에 반환합니다."""
-    items = []
-    for instance in COMFY_INSTANCES:
-        state = _service_state(_comfy_service_name(instance))
-        settings_data = load_comfy_settings(instance)
-        port = _comfy_port(instance)
-        items.append({
-            "key": instance,
-            "label": COMFY_INSTANCE_LABELS[instance],
-            "service": COMFY_SERVICE_BY_INSTANCE[instance],
-            "port": port,
-            "user_dir": _comfy_user_dir(settings.get("comfyui_dir"), instance),
-            "state": state,
-            "settings": settings_data,
-        })
-    return {"instances": items}
+    return save_comfy_settings(data)
 
 
 # ---------- 봇 / 와처 ----------
@@ -2871,70 +2150,6 @@ def unsloth_stop(request: Request):
     if request.headers.get("X-Unsloth-Stop-Confirm") != "confirmed":
         raise HTTPException(409, "Unsloth 작업 종료 확인이 필요합니다")
     return {"ok": services["unsloth"].stop()}
-
-
-# ---------- DeepSeek Harness (loopback Web UI exposed through Tailscale Serve) ----------
-
-@app.post("/api/deepseek_harness/start")
-def deepseek_harness_start():
-    global _deepseek_harness_launch_url_cache, _deepseek_harness_tailscale_url_cache
-    executable = _deepseek_harness_executable()
-    if not executable:
-        try:
-            executable = _install_deepseek_harness_runtime()
-        except Exception as error:
-            raise HTTPException(500, f"DeepSeek Harness 자동 설치 실패: {error}") from error
-    port = _deepseek_harness_port()
-    cmd = _deepseek_harness_command(executable, port)
-    workspace = os.path.abspath(os.path.expanduser(str(settings.get("server_root") or BASE_DIR)))
-    if not os.path.isdir(workspace):
-        raise HTTPException(400, f"DeepSeek Harness 기본 워크스페이스가 없습니다: {workspace}")
-    _deepseek_harness_launch_url_cache = ""
-    _deepseek_harness_tailscale_url_cache = ""
-    runtime_bin = os.path.dirname(executable)
-    pid = services["deepseek_harness"].start(
-        cmd,
-        cwd=workspace,
-        env={
-            "NO_COLOR": "1",
-            "FORCE_COLOR": "0",
-            "npm_config_loglevel": "info",
-            "npm_config_progress": "false",
-            "COREPACK_ENABLE_DOWNLOAD_PROMPT": "0",
-            "PATH": runtime_bin + os.pathsep + os.environ.get("PATH", ""),
-        },
-    )
-    deadline = time.monotonic() + 20
-    while time.monotonic() < deadline:
-        if not services["deepseek_harness"].running():
-            detail = "\n".join(tail(services["deepseek_harness"].log_file, 40))
-            raise HTTPException(500, detail or "DeepSeek Harness가 시작 직후 종료되었습니다")
-        launch_url = _deepseek_harness_launch_url()
-        if launch_url:
-            try:
-                remote_url = _ensure_deepseek_harness_tailscale(port)
-            except Exception as error:
-                _terminate_deepseek_harness_processes(force=False)
-                raise HTTPException(500, f"Tailscale Serve 연결 실패: {error}") from error
-            return {
-                "ok": True,
-                "pid": pid,
-                "port": port,
-                "launch_url": remote_url,
-            }
-        time.sleep(0.25)
-    return {"ok": True, "pid": pid, "port": port, "starting": True}
-
-
-@app.post("/api/deepseek_harness/stop")
-def deepseek_harness_stop(request: Request):
-    global _deepseek_harness_launch_url_cache, _deepseek_harness_tailscale_url_cache
-    if request.headers.get("X-DeepSeek-Harness-Stop-Confirm") != "confirmed":
-        raise HTTPException(409, "DeepSeek Harness 작업 종료 확인이 필요합니다")
-    stopped = _terminate_deepseek_harness_processes(force=False)
-    _deepseek_harness_launch_url_cache = ""
-    _deepseek_harness_tailscale_url_cache = ""
-    return {"ok": stopped}
 
 
 # ---------- 메모 / 로그 / 프리셋 ----------
@@ -3351,19 +2566,12 @@ def _gpu_tuning_snapshot():
                 "fan_auto": bool(configured.get("FAN_AUTO", 0)),
                 "clock_auto": bool(configured.get("CLOCK_AUTO", 0)),
             }
-        # CMP 170HX는 170tune(SM VF offset/언더볼트 + HBM NDIV) 방식 선택이 가능.
-        if is_cmp_170hx:
-            gpu["tune170"] = {
-                "installed": cmp170tune.installed(),
-                "configured": cmp170tune.read_config(parts[1]),
-            }
         gpus.append(gpu)
     return {
         "available": bool(gpus), "gpus": gpus,
         "service": "manager-autostart" if IS_WINDOWS else "gpu-tune.service",
         "tuning_mode": "power_and_clock_cap", "voltage_target_supported": False,
         "persistence": dict(_gpu_tuning_persistence) if IS_WINDOWS else None,
-        "tune170": cmp170tune.profiles(),
     }
 
 
@@ -3432,55 +2640,6 @@ def gpu_tuning_set(data: dict):
     return snapshot
 
 
-@app.get("/api/gpu/tuning170")
-def gpu_tuning170_get(gpu: str = "", kind: str = "status"):
-    """CMP 170HX 170tune 조회. kind=status(현재 offset/ceiling/HBM) | preflight(호환성 체크리스트)."""
-    if kind not in ("status", "preflight"):
-        raise HTTPException(400, "kind는 status 또는 preflight이어야 합니다")
-    selector = cmp170tune._selector(gpu)
-    if kind == "preflight":
-        return cmp170tune.preflight(selector)
-    return cmp170tune.status(selector)
-
-
-@app.post("/api/gpu/tuning170")
-def gpu_tuning170_set(data: dict):
-    """CMP 170HX 170tune 적용. action: set(프로파일 live+부팅 저장) | reset(stock) |
-    method(nvidia-smi|170tune) | recover | snapshot(stock baseline 기록).
-    170tune는 Linux(BAR0/NVML) 전용이라 Windows에서는 helper 미설치 503이 됩니다."""
-    action = str(data.get("action") or "")
-    selector = cmp170tune._selector(data.get("gpu_uuid") or data.get("gpu_index", 0))
-    if action == "set":
-        try:
-            profile = str(data.get("profile") or "")
-            offset = int(data.get("offset", 0))
-            clk = int(data.get("clk", 0))
-            pl = int(data.get("pl", 0))
-            ndiv = int(data.get("ndiv", 0))
-        except (TypeError, ValueError) as error:
-            raise HTTPException(400, f"170tune 설정값이 올바르지 않습니다: {error}") from error
-        result = cmp170tune.set_profile(selector, profile, offset, clk, pl, ndiv)
-    elif action == "reset":
-        result = cmp170tune.reset(selector)
-    elif action == "method":
-        result = cmp170tune.method(selector, str(data.get("method") or ""))
-    elif action == "recover":
-        result = cmp170tune.recover(selector)
-    elif action == "snapshot":
-        result = cmp170tune.snapshot_stock(selector)
-    else:
-        raise HTTPException(400, "지원하지 않는 작업입니다")
-    time.sleep(0.3)
-    snapshot = _gpu_tuning_snapshot()
-    snapshot.update({"ok": True, "message": result.get("message", "")})
-    # 즉시 최신 실행 상태도 돌려줘 (UI가 새로고침 없이 갱신).
-    try:
-        snapshot["tune170_status"] = cmp170tune.status(selector)
-    except HTTPException:
-        pass
-    return snapshot
-
-
 COMFY_CONFIRM_HEADER = "x-comfyui-stop-confirm"
 
 
@@ -3495,10 +2654,7 @@ def panic(request: Request):
         _require_comfy_confirmation(request)
     results = {}
     for name, svc in services.items():
-        if name == "deepseek_harness":
-            results[name] = _terminate_deepseek_harness_processes(force=True)
-        else:
-            results[name] = svc.stop()
+        results[name] = svc.stop()
     return {"ok": True, "results": results}
 
 
@@ -3506,14 +2662,9 @@ def panic(request: Request):
 def force_kill(server: str, request: Request):
     if server not in services:
         raise HTTPException(404, f"알 수 없는 서비스: {server}")
-    if server in ("comfyui", "comfyui_gpu1"):
+    if server == "comfyui":
         _require_comfy_confirmation(request)
-    killed = (
-        _terminate_deepseek_harness_processes(force=True)
-        if server == "deepseek_harness"
-        else services[server].force_kill()
-    )
-    return {"ok": killed}
+    return {"ok": services[server].force_kill()}
 
 
 def _folder_for(target):
@@ -3524,7 +2675,6 @@ def _folder_for(target):
         "bot": settings.get("bot_dir"),
         "watcher": settings.get("watcher_dir"),
         "unsloth": os.path.expanduser("~/.unsloth"),
-        "deepseek_harness": settings.get("server_root") or BASE_DIR,
         "logs": os.path.join(BASE_DIR, "logs"),
         "vllm": settings.get("vllm_env"),
         "base": BASE_DIR,
@@ -3816,55 +2966,6 @@ def _background_startup():
         print(f"[gpu-tune] 저장 설정 적용 실패: {error}")
         _set_startup_state("gpu_tuning", "GPU 설정 재적용 실패", error=error)
 
-    # VRAM Arbiter는 워크로드 자동 시작보다 먼저 상태를 복원합니다. 이미 떠 있는
-    # ComfyUI/llama.cpp를 재시작하지 않고 NVML과 각 서버 API로 현재 상태만 다시 읽습니다.
-    _set_startup_state("arbiter", "GPU VRAM Arbiter 상태 복원 중")
-    try:
-        def _arbiter_llama_devices(port):
-            """llama.cpp 를 이 포트로 시작할 때 선택한 GPU 목록 — NVML 추정이 아닌 기동 정보 (§7).
-
-            우선순위:
-              1) last_run.json 의 gpuDevices — /api/llama/start 가 항상 UUID 로 기록하고 디스크에
-                 남으므로 main_server 가 재시작돼도 유효하다. 1 차 소스.
-              2) services["llama"].device — 이번 프로세스에서 방금 start() 인 경우에만 살아 있다.
-              3) [] — 아무것도 없으면 arbiter 가 NVML 로 폴백한다 (검증용).
-            토큰은 UUID / index / "CUDA1" 표식이 섞여 올 수 있어 arbiter._resolve_uuid 가 통일한다.
-            """
-            want = str(port).strip()
-            try:
-                with open(LAST_RUN_FILE, "r", encoding="utf-8") as handle:
-                    launch = json.load(handle)
-                if str(launch.get("port") or "").strip() == want:
-                    devices = [str(item).strip() for item in (launch.get("gpuDevices") or [])
-                               if str(item).strip()]
-                    if devices:
-                        return devices
-            except Exception:
-                pass
-            llama_service = services.get("llama")
-            if llama_service is not None and llama_service.device:
-                configured = llama_service.device
-                if not isinstance(configured, (list, tuple)):
-                    configured = [configured]
-                if want == str(_llama_port_value(load_llama_settings()) or LLAMA_PORT):
-                    return [str(item).strip() for item in configured if str(item).strip()]
-            return []
-
-        vram_arbiter.arbiter.configure(
-            comfy_instances=lambda: list(COMFY_INSTANCES),
-            comfy_port=_comfy_port,
-            comfy_device=lambda instance: load_comfy_settings(instance).get("gpu_device") or "",
-            comfy_label=lambda instance: COMFY_INSTANCE_LABELS.get(instance, instance),
-            llama_port=lambda: int(_llama_port_value(load_llama_settings()) or LLAMA_PORT),
-            llama_devices=_arbiter_llama_devices,
-            service_running=lambda name: bool(services.get(name) and _service_state(name)["running"]),
-            llama_restart=_restart_llama_from_last_run,
-        )
-        vram_arbiter.arbiter.start()
-    except Exception as error:
-        print(f"[arbiter] 시작 실패: {error}")
-        _set_startup_state("arbiter", "VRAM Arbiter 시작 실패", error=error)
-
     if settings.get("autostart"):
         _set_startup_state("services", "저장된 서비스 자동 시작 준비 중")
         if IS_WINDOWS:
@@ -3896,36 +2997,14 @@ def shutdown():
     motherboard_fan_controller.close()
 
 
-def _restart_llama_from_last_run() -> bool:
-    """Arbiter의 llama unload 훅. llama_unload_mode="restart"일 때만 호출됩니다.
-
-    기본값(protect)에서는 이 함수를 부르지 않습니다. 프로세스 재시작 없이 모델을
-    내리려면 llama-server를 --models-dir 라우터 모드로 실행하면 /models/unload 가 생깁니다.
-    """
-    launch = _read_json(LAST_RUN_FILE, {})
-    if not launch:
-        print("[arbiter] llama 재시작 정보(last_run.json)가 없습니다")
-        return False
-    try:
-        services["llama"].stop()
-        devices = normalize_gpu_devices(launch.get("gpuDevices") or launch.get("device") or [])
-        services["llama"].start(_build_llama_cmd(launch), device=devices or None)
-        return True
-    except Exception as error:
-        print(f"[arbiter] llama 재시작 실패: {error}")
-        return False
-
-
 def _auto_start_services():
     keys = [
         ("autostart_llama", "llama"),
         ("autostart_comfyui", "comfyui"),
-        ("autostart_comfyui_gpu1", "comfyui_gpu1"),
         ("autostart_bot", "bot"),
         ("autostart_watcher", "watcher"),
         ("autostart_vllm", "vllm"),
         ("autostart_unsloth", "unsloth"),
-        ("autostart_deepseek_harness", "deepseek_harness"),
     ]
     any_set = any(settings.get(k) for k, _ in keys)
     for key, name in keys:
@@ -3941,9 +3020,7 @@ def _auto_start_services():
                     devices = normalize_gpu_devices(launch.get("gpuDevices") or launch.get("device") or [])
                     services["llama"].start(_build_llama_cmd(launch), device=devices or None)
             elif name == "comfyui":
-                _comfy_start_internal("main")
-            elif name == "comfyui_gpu1":
-                _comfy_start_internal("gpu1")
+                comfy_start()
             elif name == "bot":
                 bot_start()
             elif name == "watcher":
@@ -3956,8 +3033,6 @@ def _auto_start_services():
                 services["vllm"].start(cmd, env=runtime_env, device=devices or None)
             elif name == "unsloth":
                 unsloth_start()
-            elif name == "deepseek_harness":
-                deepseek_harness_start()
         except Exception:
             pass
     if not any_set:

@@ -49,8 +49,6 @@ DEFAULTS_LINUX = {
     "vllm_port": "8000",
     "unsloth_executable": os.path.expanduser("~/.local/bin/unsloth"),
     "unsloth_port": "8890",
-    "deepseek_harness_executable": "",
-    "deepseek_harness_port": "3080",
     "bot_dir": "/opt/comfy_bridge",
     "watcher_dir": "/home/flux/Documents/New project",
 }
@@ -75,8 +73,6 @@ DEFAULTS_WINDOWS = {
     "vllm_port": "8000",
     "unsloth_executable": os.path.join(_USERPROFILE, ".local", "bin", "unsloth.exe"),
     "unsloth_port": "8890",
-    "deepseek_harness_executable": "",
-    "deepseek_harness_port": "3080",
     "bot_dir": os.path.join(_USERPROFILE, "comfy_bridge"),
     "watcher_dir": os.path.join(_USERPROFILE, "Documents", "New project"),
 }
@@ -91,7 +87,6 @@ DEFAULTS.update({
     "autostart_watcher": False,
     "autostart_vllm": False,
     "autostart_unsloth": False,
-    "autostart_deepseek_harness": False,
     # GPU 전력/클럭/팬 튜닝 마스터 토글 (끄면 부팅 시 저장값 재적용과 UI 적용을 모두 차단)
     "gpu_tuning_enabled": True,
 })
@@ -112,8 +107,6 @@ ENV_MAP = {
     "vllm_port": "VLLM_PORT",
     "unsloth_executable": "UNSLOTH_EXECUTABLE",
     "unsloth_port": "UNSLOTH_PORT",
-    "deepseek_harness_executable": "DEEPSEEK_HARNESS_EXECUTABLE",
-    "deepseek_harness_port": "DEEPSEEK_HARNESS_PORT",
     "bot_dir": "BOT_DIR",
     "watcher_dir": "WATCHER_DIR",
     "autostart": "AUTOSTART",
@@ -124,7 +117,6 @@ ENV_MAP = {
     "autostart_watcher": "AUTOSTART_WATCHER",
     "autostart_vllm": "AUTOSTART_VLLM",
     "autostart_unsloth": "AUTOSTART_UNSLOTH",
-    "autostart_deepseek_harness": "AUTOSTART_DEEPSEEK_HARNESS",
 }
 
 

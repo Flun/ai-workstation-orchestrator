@@ -1,0 +1,34 @@
+[
+ {
+  "id": "1787933089398-enable",
+  "at": 1787933089.3988554,
+  "kind": "enable",
+  "gpu_uuid": "GPU-309d93a2-b61f-60c2-d5d3-9a79f26e7468",
+  "service": "",
+  "detail": "GPU 1 (NVIDIA GeForce RTX 3090) Arbiter ON"
+ },
+ {
+  "id": "1787937831853-disable",
+  "at": 1787937831.8538547,
+  "kind": "disable",
+  "gpu_uuid": "GPU-309d93a2-b61f-60c2-d5d3-9a79f26e7468",
+  "service": "",
+  "detail": "GPU 1 (NVIDIA GeForce RTX 3090) Arbiter OFF"
+ },
+ {
+  "id": "1788059782944-enable",
+  "at": 1788059782.9445622,
+  "kind": "enable",
+  "gpu_uuid": "GPU-309d93a2-b61f-60c2-d5d3-9a79f26e7468",
+  "service": "",
+  "detail": "GPU 1 (NVIDIA GeForce RTX 3090) Arbiter ON"
+ },
+ {
+  "id": "1788078800431-disable",
+  "at": 1788078800.431009,
+  "kind": "disable",
+  "gpu_uuid": "GPU-309d93a2-b61f-60c2-d5d3-9a79f26e7468",
+  "service": "",
+  "detail": "GPU 1 (NVIDIA GeForce RTX 3090) Arbiter OFF"
+ }
+]

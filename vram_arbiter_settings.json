@@ -1,0 +1,45 @@
+{
+  "enabled": true,
+  "gpus": {
+    "GPU-309d93a2-b61f-60c2-d5d3-9a79f26e7468": {
+      "enabled": false,
+      "index": 1,
+      "name": "NVIDIA GeForce RTX 3090",
+      "safety_margin_mb": 2048,
+      "evict_threshold_percent": 0
+    },
+    "GPU-6cd658de-2bfc-dbd7-78d3-beec843855d9": {
+      "index": 0,
+      "name": "NVIDIA CMP 170HX",
+      "enabled": false,
+      "safety_margin_mb": 2048,
+      "evict_threshold_percent": 0
+    }
+  },
+  "default_evict_threshold_percent": 0,
+  "default_safety_margin_mb": 2048,
+  "admission_timeout_sec": 900,
+  "unload_timeout_sec": 60,
+  "llama_unload_mode": "protect",
+  "active_util_percent": 5,
+  "expected_vram_mb": {},
+  "learned_peak_mb": {
+    "llama-8080": 21808,
+    "llama-8081": 54213,
+    "comfy-main": 29411,
+    "llama-44099": 29794
+  },
+  "unknown_clear_residents": true,
+  "post_admit_grace_sec": 30,
+  "unknown_expected_min_mb": 4096,
+  "paired_handoff_enabled": true,
+  "pending_demand_ttl_sec": 900.0,
+  "exclude_services": [],
+  "llama_router_enabled": true,
+  "llama_router_preset_path": "",
+  "llama_router_autoload": true,
+  "llama_router_model_name": "",
+  "llama_router_use_alias": false,
+  "llama_router_aliases": "",
+  "llama_inject_missing_model": true
+}

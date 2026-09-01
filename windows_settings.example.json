@@ -12,6 +12,8 @@
   "vllm_port": "8000",
   "unsloth_executable": "C:\\Users\\<user>\\.local\\bin\\unsloth.exe",
   "unsloth_port": "8890",
+  "deepseek_harness_executable": "",
+  "deepseek_harness_port": "3080",
   "bot_dir": "C:\\Users\\<user>\\comfy_bridge",
   "watcher_dir": "C:\\Users\\<user>\\Documents\\New project",
   "autostart": false,
@@ -21,5 +23,6 @@
   "autostart_watcher": false,
   "autostart_vllm": false,
   "autostart_unsloth": false,
+  "autostart_deepseek_harness": false,
   "gpu_tuning_enabled": true
 }

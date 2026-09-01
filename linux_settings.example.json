@@ -9,8 +9,11 @@
   "model_root": "/mnt/main-server-models/model",
   "unsloth_executable": "/home/flux/.local/bin/unsloth",
   "unsloth_port": "8890",
+  "deepseek_harness_executable": "",
+  "deepseek_harness_port": "3080",
   "bot_dir": "/opt/comfy_bridge",
   "watcher_dir": "/home/flux/Documents/New project",
   "autostart": false,
-  "autostart_unsloth": false
+  "autostart_unsloth": false,
+  "autostart_deepseek_harness": false
 }

@@ -113,6 +113,22 @@ sudo systemctl daemon-reload
 sudo systemctl enable gpu-tune.service
 sudo /usr/local/sbin/main-server-linux-setup apply gpu_services
 
+echo "170tune (CMP 170HX 클럭 제어) helper 설치..."
+sudo install -o root -g root -m 0755 system/main-server-170tune /usr/local/sbin/main-server-170tune
+sudo install -o root -g root -m 0644 system/170tune-apply.service /etc/systemd/system/170tune-apply.service
+sed "s/^flux /$INSTALL_USER /" system/main-server-170tune.sudoers | sudo tee /etc/sudoers.d/main-server-170tune >/dev/null
+sudo chown root:root /etc/sudoers.d/main-server-170tune
+sudo chmod 0440 /etc/sudoers.d/main-server-170tune
+sudo /usr/sbin/visudo -cf /etc/sudoers.d/main-server-170tune
+if [ ! -x /usr/local/bin/170tune ]; then
+    # 170tune 레포 + helper 빌드 (nvml_oc 등 -> /usr/local/bin). nvml.h가 없으면
+    # libnvidia-ml-dev 패키지 설치 후 재시도 (sudo apt install libnvidia-ml-dev).
+    sudo git clone --depth 1 https://github.com/cachenetics/170tune /opt/170tune 2>/dev/null || sudo mkdir -p /opt/170tune
+    (cd /opt/170tune && sudo ./install.sh) || echo "170tune 설치 실패 — nvidia-smi 방식은 그대로 사용 가능"
+fi
+sudo systemctl daemon-reload
+sudo systemctl enable 170tune-apply.service
+
 echo "main_server 사용자 서비스 설치..."
 mkdir -p "$HOME/.config/systemd/user"
 UNIT_PATH="$HOME/.config/systemd/user/main_server.service"

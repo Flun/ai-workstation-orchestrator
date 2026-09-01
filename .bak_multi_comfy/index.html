@@ -162,7 +162,7 @@
                 <div v-for="gpu in gpuTopology.gpus" :key="gpu.uuid" class="rounded-xl border bg-zinc-950/60 p-4 shadow-inner" :class="gpu.temp_memory > gpuThermalEvents.threshold_c ? 'border-rose-500/70' : gpu.index === 0 ? 'border-sky-500/30' : 'border-violet-500/30'">
                     <div class="flex min-w-0 items-center justify-between gap-3">
                         <div class="flex min-w-0 items-center gap-2"><span class="shrink-0 rounded-md px-2 py-1 font-mono text-sm font-bold" :class="gpu.index === 0 ? 'bg-sky-500/15 text-sky-300' : 'bg-violet-500/15 text-violet-300'">GPU {{ gpu.index }}</span><span class="truncate text-sm font-semibold">{{ gpu.name }}</span></div>
-                        <div class="flex shrink-0 items-center gap-2 text-[10px]"><span v-if="thermalEventCount(gpu.uuid)" class="text-amber-400">HBM 경고 {{ thermalEventCount(gpu.uuid) }}회</span><button @click="toggleArbiter(gpu.uuid, !arbiterFor(gpu.uuid).arbiter_enabled)" :disabled="arbiterBusy === gpu.uuid" :title="arbiterFor(gpu.uuid).arbiter_enabled ? '이 GPU의 ComfyUI / llama.cpp VRAM을 자동 관리 중입니다. 켜면 다시 끄기 전까지 제어하지 않습니다.' : '이 GPU의 ComfyUI / llama.cpp VRAM을 자동 관리합니다. idle로는 내리지 않고 실제로 모자랄 때만 내립니다.'" class="rounded border px-1.5 py-0.5 font-semibold" :class="arbiterFor(gpu.uuid).arbiter_enabled ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300' : 'border-zinc-700 text-zinc-500 hover:text-zinc-300'">{{ arbiterBusy === gpu.uuid ? '적용 중' : 'ARB ' + (arbiterFor(gpu.uuid).arbiter_enabled ? 'ON' : 'OFF') }}</button><button @click="toggleGpuDetails(gpu.uuid)" class="rounded border border-zinc-800 px-1.5 py-0.5 text-zinc-500 hover:text-zinc-300">{{ expandedGpus[gpu.uuid] ? '접기' : '상세' }}</button></div>
+                        <div class="flex shrink-0 items-center gap-2 text-[10px]"><span v-if="thermalEventCount(gpu.uuid)" class="text-amber-400">HBM 경고 {{ thermalEventCount(gpu.uuid) }}회</span><button @click="toggleGpuDetails(gpu.uuid)" class="rounded border border-zinc-800 px-1.5 py-0.5 text-zinc-500 hover:text-zinc-300">{{ expandedGpus[gpu.uuid] ? '접기' : '상세' }}</button></div>
                     </div>
                     <div class="mt-4 grid gap-3 sm:grid-cols-2">
                         <div class="rounded-lg border border-zinc-800 bg-zinc-900/70 p-3">
@@ -173,26 +173,6 @@
                             <div class="flex items-end justify-between gap-2"><span class="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">VRAM <span class="ml-1 font-normal normal-case text-zinc-600">{{ ((gpu.vram_used ?? 0) / 1024).toFixed(1) }} / {{ ((gpu.vram_total ?? 0) / 1024).toFixed(1) }} GB</span></span><span class="font-mono text-xl font-semibold text-zinc-100">{{ (gpu.mem_util ?? 0).toFixed(1) }}%</span></div>
                             <div class="mt-2 h-2 overflow-hidden rounded-full bg-zinc-800"><div class="h-full rounded-full transition-all duration-500" :class="gpu.mem_util > 90 ? 'bg-rose-500' : gpu.mem_util > 70 ? 'bg-amber-500' : 'bg-emerald-500'" :style="{width: gpu.mem_util + '%'}"></div></div>
                             <div class="mt-1 text-right font-mono text-[9px] text-zinc-600">FREE {{ ((gpu.vram_free ?? 0) / 1024).toFixed(1) }} GB</div>
-                        </div>
-                    </div>
-                    <div v-if="arbiterFor(gpu.uuid).arbiter_enabled" class="mt-3 rounded-lg border border-emerald-500/20 bg-emerald-500/[0.04] px-3 py-2">
-                        <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px]">
-                            <span class="font-semibold uppercase tracking-wider text-emerald-300/80">VRAM Arbiter</span>
-                            <span class="font-mono text-zinc-400">여유 {{ ((arbiterFor(gpu.uuid).free_vram_mb ?? 0) / 1024).toFixed(1) }} GB</span>
-                            <span class="font-mono text-zinc-600">마진 {{ arbiterFor(gpu.uuid).safety_margin_mb ?? 0 }} MB</span>
-                            <label class="flex items-center gap-1" :title="arbiterThresholdHelp(gpu.uuid)">
-                                <span class="text-zinc-500">Evict</span>
-                                <input type="number" min="0" max="100" step="5" class="w-11 rounded border border-zinc-700 bg-zinc-900 px-1 py-0 text-right font-mono text-zinc-300 focus:border-emerald-500 focus:outline-none"
-                                       :value="arbiterFor(gpu.uuid).evict_threshold_percent ?? 0"
-                                       @change="setArbiterThreshold(gpu.uuid, $event.target.value)">
-                                <span class="text-zinc-600">%</span>
-                            </label>
-                            <span v-if="(arbiterFor(gpu.uuid).unmanaged_vram_mb ?? 0) > 0" class="font-mono text-zinc-600" title="Arbiter가 제어하지 않는 CUDA 프로그램 사용량입니다. 종료 대상은 아니지만 여유 VRAM 계산에 포함됩니다.">외부 {{ (arbiterFor(gpu.uuid).unmanaged_vram_mb / 1024).toFixed(1) }} GB</span>
-                            <span v-if="(arbiterFor(gpu.uuid).waiting_requests ?? 0) > 0" class="text-amber-300">대기 {{ arbiterFor(gpu.uuid).waiting_requests }}건</span>
-                            <span class="ml-auto flex flex-wrap justify-end gap-1">
-                                <span v-for="svc in (arbiterFor(gpu.uuid).services || [])" :key="'arb-'+gpu.uuid+'-'+svc.id" class="rounded border px-1.5 py-0.5" :class="arbiterStateClass(svc.state)" :title="(svc.model || svc.id) + ' · 예상 ' + (svc.expected_vram_mb ? (svc.expected_vram_mb/1024).toFixed(1)+'GB ('+arbiterSourceLabel(svc.estimate_source)+')' : '추정 중') + (svc.router_capable ? ' · Router 모드' : '') + (svc.domain_note ? ' · '+svc.domain_note : '') + (svc.last_error ? ' · '+svc.last_error : '')"><span v-if="svc.router_capable" class="mr-1 text-indigo-300">RT</span>{{ svc.label }} · {{ svc.state_label }}<span v-if="svc.current_vram_mb" class="ml-1 font-mono">{{ (svc.current_vram_mb / 1024).toFixed(1) }}GB</span><span v-if="svc.multi_gpu || svc.managed_evict === false" class="ml-1 text-amber-400" title="GPU에 걸쳐 실행되어 Arbiter eviction 관리에서 제외되었습니다. 이 서비스는 내리지도 않고 이 서비스 때문에 다른 모델을 내리지도 않습니다.">제외</span></span>
-                                <span v-if="!(arbiterFor(gpu.uuid).services || []).length" class="text-zinc-600">관리 대상 없음</span>
-                            </span>
                         </div>
                     </div>
                     <div class="mt-3 grid grid-cols-2 gap-px overflow-hidden rounded-lg bg-zinc-800 sm:grid-cols-6">
@@ -218,7 +198,7 @@
                 </div>
             </div>
             <div v-if="gpuTopology.available" class="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-3">
-                <div v-for="key in ['comfyui','comfyui_gpu1','llama','vllm']" :key="key" class="rounded-lg border border-zinc-800 bg-zinc-950/30 p-3 text-xs">
+                <div v-for="key in ['comfyui','llama','vllm']" :key="key" class="rounded-lg border border-zinc-800 bg-zinc-950/30 p-3 text-xs">
                     <div class="flex justify-between"><span class="font-semibold">{{ gpuTopology.services[key]?.label }}</span><span class="font-mono text-amber-300">{{ serviceVramLabel(key) }}</span></div>
                     <div class="mt-2 text-[11px] text-zinc-500">지정: {{ configuredGpuLabel(gpuTopology.services[key]) }} · 실사용: {{ (gpuTopology.services[key]?.active_gpu_indexes || []).map(i => 'GPU '+i).join(', ') || '없음' }}</div>
                     <div v-if="key === 'llama' && hasOffloadData(gpuTopology.services[key]?.offload)" class="mt-1 text-[11px] text-zinc-500">오프로딩 {{ gpuTopology.services[key].offload.layers_offloaded ?? '?' }}/{{ gpuTopology.services[key].offload.layers_total ?? '?' }} layers · GPU buffer {{ gpuTopology.services[key].offload.gpu_model_buffer_gb ?? '?' }} GB · RAM buffer {{ gpuTopology.services[key].offload.cpu_model_buffer_gb ?? '?' }} GB</div>
@@ -249,76 +229,18 @@
             </div>
             <div v-if="gpuTuning.available" class="mt-4 rounded-lg border border-zinc-800 bg-zinc-950/40 p-4">
                 <div class="flex flex-wrap items-start justify-between gap-3">
-                    <div class="min-w-0 flex-1"><h3 class="text-xs font-semibold uppercase tracking-wider text-zinc-400">{{ isWindows ? 'GPU 전력 / 코어 클럭 / 팬' : 'GPU 전력 / 코어 클럭' }}</h3><div v-if="!gpuTuningExpanded" class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-zinc-500"><span v-for="gpu in gpuTuning.gpus" :key="'tuning-summary-'+gpu.uuid" class="whitespace-nowrap"><b class="font-medium text-zinc-300">GPU {{ gpu.index }}</b> {{ gpu.power_draw ?? '--' }}W · Core {{ gpu.clock_current ?? '--' }}MHz · 설정 {{ gpu.configured?.enabled ? `${gpu.configured.power_limit}W / ${gpu.configured.clock_max}MHz` : gpu.configured?.enabled === false ? '꺼짐' : '미설정' }}<span v-if="gpu.t170?.installed" class="ml-1 rounded border border-indigo-500/30 bg-indigo-500/10 px-1 py-0.5 text-[9px] text-indigo-300">170tune {{ gpu.t170.method === '170tune' ? '활성' : '가용' }}</span></span></div><template v-else><p class="mt-1 text-[11px] text-zinc-600">적용한 값은 GPU UUID별로 저장되어 다음 부팅에도 유지됩니다. Core max는 고정 클럭이 아니라 부스트 상한이며 idle에서는 자동으로 다운클럭됩니다.</p><p v-if="!autoStart.gpu_tuning_enabled" class="mt-1 text-[11px] text-amber-500">GPU 튜닝이 꺼져 있어 부팅 시 저장된 값이 재적용되지 않습니다 (MSI Afterburner 등 외부 도구 사용 시 권장).</p><p class="mt-1 text-[11px] text-amber-500/80">CMP 170HX 권장 기본값: 250W / 코어 1410MHz. HBM 메모리 클럭은 지원값으로 고정되며 이 화면에서 변경하지 않습니다.</p></template></div>
+                    <div class="min-w-0 flex-1"><h3 class="text-xs font-semibold uppercase tracking-wider text-zinc-400">{{ isWindows ? 'GPU 전력 / 코어 클럭 / 팬' : 'GPU 전력 / 코어 클럭' }}</h3><div v-if="!gpuTuningExpanded" class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-zinc-500"><span v-for="gpu in gpuTuning.gpus" :key="'tuning-summary-'+gpu.uuid" class="whitespace-nowrap"><b class="font-medium text-zinc-300">GPU {{ gpu.index }}</b> {{ gpu.power_draw ?? '--' }}W · Core {{ gpu.clock_current ?? '--' }}MHz · 설정 {{ gpu.configured?.enabled ? `${gpu.configured.power_limit}W / ${gpu.configured.clock_max}MHz` : gpu.configured?.enabled === false ? '꺼짐' : '미설정' }}</span></div><template v-else><p class="mt-1 text-[11px] text-zinc-600">적용한 값은 GPU UUID별로 저장되어 다음 부팅에도 유지됩니다. Core max는 고정 클럭이 아니라 부스트 상한이며 idle에서는 자동으로 다운클럭됩니다.</p><p v-if="!autoStart.gpu_tuning_enabled" class="mt-1 text-[11px] text-amber-500">GPU 튜닝이 꺼져 있어 부팅 시 저장된 값이 재적용되지 않습니다 (MSI Afterburner 등 외부 도구 사용 시 권장).</p><p class="mt-1 text-[11px] text-amber-500/80">CMP 170HX 권장 기본값: 250W / 코어 1410MHz. HBM 메모리 클럭은 지원값으로 고정되며 이 화면에서 변경하지 않습니다.</p></template></div>
                     <div class="flex items-center gap-3">
                         <template v-if="gpuTuningExpanded"><label class="flex cursor-pointer select-none items-center gap-1.5 rounded border px-2 py-1 text-[11px] transition-colors" :class="autoStart.gpu_tuning_enabled ? 'border-indigo-500/40 bg-indigo-500/10 text-indigo-300' : 'border-zinc-700 text-zinc-500 hover:bg-zinc-800'"><input type="checkbox" v-model="autoStart.gpu_tuning_enabled" @change="saveAutoStart"> GPU 튜닝 사용</label><span class="rounded border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[10px] text-emerald-400">{{ gpuTuning.service === 'manager-autostart' ? '매니저 시작 시 적용' : 'systemd 적용' }}</span><span v-if="gpuTuning.persistence" class="rounded border px-2 py-1 text-[10px]" :class="gpuTuning.persistence.status === 'ready' ? 'border-emerald-500/20 text-emerald-400' : gpuTuning.persistence.status === 'retrying' ? 'border-amber-500/30 text-amber-400' : 'border-zinc-700 text-zinc-500'">{{ gpuTuning.persistence.status === 'ready' ? `부팅 재적용 완료 (${gpuTuning.persistence.applied})` : gpuTuning.persistence.status === 'retrying' ? '부팅 재적용 재시도 중' : gpuTuning.persistence.status === 'disabled' ? '재적용 꺼짐' : '재적용 대기' }}</span></template>
                         <button @click="gpuTuningExpanded=!gpuTuningExpanded" class="shrink-0 rounded border border-zinc-700 bg-zinc-800/60 px-2.5 py-1 text-[10px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200">{{ gpuTuningExpanded ? '접기' : '펼치기' }}</button>
                     </div>
                 </div>
-                <div v-if="gpuTuningExpanded"><div v-for="gpu in gpuTuning.gpus" :key="gpu.uuid" class="mt-3">
-                    <div class="grid gap-3 rounded border border-zinc-800 p-3 lg:items-end" :class="[isWindows ? 'lg:grid-cols-[minmax(180px,1fr)_130px_150px_130px_auto]' : 'lg:grid-cols-[minmax(180px,1fr)_130px_150px_auto]', gpu.t170?.method === '170tune' ? 'opacity-50' : '']">
-                        <div><div class="flex flex-wrap items-center gap-2"><div class="text-xs font-semibold">GPU {{ gpu.index }} · {{ gpu.profile === 'cmp_170hx' ? 'CMP 170HX' : gpu.name }}</div><span class="rounded border px-1.5 py-0.5 text-[9px]" :class="gpu.configured?.enabled === false ? 'border-zinc-700 text-zinc-500' : gpu.configured?.enabled ? 'border-indigo-500/30 text-indigo-300' : 'border-zinc-800 text-zinc-600'">{{ gpu.configured?.enabled === false ? '적용 꺼짐' : gpu.configured?.enabled ? '부팅 적용' : '미설정' }}</span><span v-if="gpu.t170?.method === '170tune'" class="rounded border border-indigo-500/40 bg-indigo-500/10 px-1.5 py-0.5 text-[9px] text-indigo-300">170tune 방식</span></div><div class="mt-1 font-mono text-[9px] text-zinc-600">{{ gpu.uuid }}</div><div class="mt-1 text-[10px] text-zinc-500">현재 {{ gpu.power_draw ?? '--' }}W · Core {{ gpu.clock_current ?? '--' }}MHz · Memory {{ gpu.memory_clock_current ?? '--' }}MHz · Fan {{ gpu.fan_speed ?? '--' }}%</div></div>
-                        <label class="text-[10px] text-zinc-500">Power ({{ gpu.power_min }}–{{ gpu.power_max }}W)<input type="number" v-model.number="gpu.edit.power_limit" :min="gpu.power_min" :max="gpu.power_max" :disabled="!autoStart.gpu_tuning_enabled || gpu.t170?.method === '170tune'" class="input-base mt-1 w-full text-right disabled:opacity-40"></label>
-                        <label class="text-[10px] text-zinc-500">Core max (idle 자동)<input type="number" v-model.number="gpu.edit.clock_max" min="210" :max="gpu.clock_hardware_max" :disabled="!autoStart.gpu_tuning_enabled || gpu.t170?.method === '170tune'" class="input-base mt-1 w-full text-right disabled:opacity-40"></label>
-                        <label v-if="isWindows" class="text-[10px] text-zinc-500">Fan (0=자동, 20–100%)<input type="number" v-model.number="gpu.edit.fan_percent" min="0" max="100" :disabled="!gpu.fan_supported || !autoStart.gpu_tuning_enabled || gpu.t170?.method === '170tune'" class="input-base mt-1 w-full text-right disabled:opacity-40"></label>
-                        <div class="flex flex-wrap gap-2"><button @click="applyGpuTuning(gpu)" :disabled="gpuTuningSaving || !autoStart.gpu_tuning_enabled || gpu.t170?.method === '170tune'" class="rounded bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-40">적용</button><button @click="resetGpuTuning(gpu)" :disabled="gpuTuningSaving || !autoStart.gpu_tuning_enabled || gpu.t170?.method === '170tune'" class="rounded border border-zinc-700 px-3 py-2 text-xs text-zinc-400 hover:bg-zinc-800 disabled:opacity-40">권장 기본값</button><button @click="disableGpuTuning(gpu)" :disabled="gpuTuningSaving || !autoStart.gpu_tuning_enabled || gpu.t170?.method === '170tune' || gpu.configured?.enabled === false" class="rounded border border-zinc-800 px-3 py-2 text-xs text-zinc-500 hover:bg-zinc-800 disabled:opacity-40">적용 끄기</button></div>
-                    </div>
-                    <div v-if="gpu.profile === 'cmp_170hx' && gpu.t170" class="mt-2 rounded border border-indigo-500/20 bg-indigo-500/5 p-3">
-                        <div class="flex flex-wrap items-center justify-between gap-2">
-                            <div class="flex flex-wrap items-center gap-2">
-                                <b class="text-xs text-indigo-300">CMP 170HX 클럭 제어 (170tune)</b>
-                                <span v-if="!gpu.t170.installed" class="rounded border border-rose-500/30 px-1.5 py-0.5 text-[9px] text-rose-400">미설치 — git clone https://github.com/cachenetics/170tune /opt/170tune && sudo ./install.sh</span>
-                                <span v-else class="rounded border border-emerald-500/30 px-1.5 py-0.5 text-[9px] text-emerald-400">설치됨</span>
-                            </div>
-                            <div class="flex items-center gap-2 text-[10px] text-zinc-400">
-                                <span>부팅 방식:</span>
-                                <label class="flex cursor-pointer items-center gap-1"><input type="radio" value="nvidia-smi" v-model="gpu.t170.method" :disabled="!gpu.t170.installed || gpu.t170.busy" @change="setTune170Method(gpu)"> nvidia-smi</label>
-                                <label class="flex cursor-pointer items-center gap-1"><input type="radio" value="170tune" v-model="gpu.t170.method" :disabled="!gpu.t170.installed || gpu.t170.busy" @change="setTune170Method(gpu)"> 170tune</label>
-                            </div>
-                        </div>
-                        <div class="mt-2 flex flex-wrap items-end gap-3" :class="gpu.t170.method !== '170tune' || !gpu.t170.installed ? 'pointer-events-none opacity-40' : ''">
-                            <label class="text-[10px] text-zinc-500">프로파일 (SM offset / 상한 / PL)
-                                <select v-model="gpu.t170.profile" :disabled="!autoStart.gpu_tuning_enabled || gpu.t170.busy" class="input-base mt-1">
-                                    <option v-for="(p, name) in gpuTuning.tune170.profiles" :key="name" :value="name">{{ p.label }} — offset +{{ p.offset ?? '직접' }} / {{ p.clk ? p.clk + 'MHz' : '잠금 해제' }} / {{ p.pl }}W</option>
-                                </select>
-                            </label>
-                            <template v-if="gpu.t170.profile === 'custom'">
-                                <label class="text-[10px] text-zinc-500">Offset (MHz, 0~450)<input type="number" v-model.number="gpu.t170.offset" min="0" max="450" :disabled="!autoStart.gpu_tuning_enabled || gpu.t170.busy" class="input-base mt-1 w-20 text-right disabled:opacity-40"></label>
-                                <label class="text-[10px] text-zinc-500">Ceiling (MHz, 0=없음)<input type="number" v-model.number="gpu.t170.clk" min="0" max="5000" :disabled="!autoStart.gpu_tuning_enabled || gpu.t170.busy" class="input-base mt-1 w-20 text-right disabled:opacity-40"></label>
-                                <label class="text-[10px] text-zinc-500">PL (W, 0=300)<input type="number" v-model.number="gpu.t170.pl" min="0" max="500" :disabled="!autoStart.gpu_tuning_enabled || gpu.t170.busy" class="input-base mt-1 w-16 text-right disabled:opacity-40"></label>
-                            </template>
-                            <label class="text-[10px] text-zinc-500">HBM NDIV (stock {{ gpuTuning.tune170.stock_ndiv }}, 0=변경 안 함)<input type="number" v-model.number="gpu.t170.ndiv" min="0" max="80" :disabled="!autoStart.gpu_tuning_enabled || gpu.t170.busy" class="input-base mt-1 w-16 text-right disabled:opacity-40"></label>
-                            <div class="flex flex-wrap gap-2">
-                                <button @click="applyTune170(gpu)" :disabled="gpu.t170.busy || !autoStart.gpu_tuning_enabled" class="rounded bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-40">{{ gpu.t170.busy ? '처리 중...' : '적용 + 부팅 저장' }}</button>
-                                <button @click="resetTune170(gpu)" :disabled="gpu.t170.busy" class="rounded border border-zinc-700 px-3 py-2 text-xs text-zinc-400 hover:bg-zinc-800 disabled:opacity-40">stock 리셋</button>
-                                <button @click="fetchTune170(gpu, 'status')" :disabled="gpu.t170.busy" class="rounded border border-zinc-700 px-3 py-2 text-xs text-zinc-400 hover:bg-zinc-800 disabled:opacity-40">상태</button>
-                                <button @click="fetchTune170(gpu, 'preflight')" :disabled="gpu.t170.busy" class="rounded border border-zinc-700 px-3 py-2 text-xs text-zinc-400 hover:bg-zinc-800 disabled:opacity-40">preflight</button>
-                                <button @click="snapshotTune170(gpu)" :disabled="gpu.t170.busy" class="rounded border border-zinc-800 px-3 py-2 text-xs text-zinc-500 hover:bg-zinc-800 disabled:opacity-40" title="이 카드의 현재 값을 stock revert baseline으로 기록 (새 카드 한 번만)">snapshot-stock</button>
-                                <button @click="recoverTune170(gpu)" :disabled="gpu.t170.busy" class="rounded border border-rose-500/30 px-3 py-2 text-xs text-rose-400 hover:bg-rose-500/10 disabled:opacity-40" title="카드가 wedge/응답 고사 상태일 때 stock으로 돌려놓는 복구">recover</button>
-                            </div>
-                        </div>
-                        <div v-if="gpu.t170.status" class="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[10px]" :class="gpu.t170.status.ok ? 'text-zinc-400' : 'text-rose-400'">
-                            <span>offset {{ gpu.t170.status.offset_mhz ?? '--' }}</span>
-                            <span>SM {{ gpu.t170.status.clk_current_sm ?? '--' }} / {{ gpu.t170.status.clk_max_sm ?? '--' }} MHz</span>
-                            <span>HBM {{ gpu.t170.status.mem_clock_mhz ?? gpu.t170.status.mem_clock_current ?? '--' }} MHz [{{ gpu.t170.status.mem_source ?? '?' }}]</span>
-                            <span>PL {{ gpu.t170.status.power_limit ?? '--' }}W (draw {{ gpu.t170.status.power_draw ?? '--' }}W)</span>
-                            <span>HBM temp {{ gpu.t170.status.temp_mem ?? '--' }}°C</span>
-                            <span v-for="w in gpu.t170.status.warnings" :key="w" class="text-rose-400">{{ w }}</span>
-                        </div>
-                        <div v-if="gpu.t170.preflight" class="mt-2 space-y-0.5 text-[10px]">
-                            <p class="text-zinc-500">preflight: <b :class="gpu.t170.preflight.ok ? 'text-emerald-400' : 'text-rose-400'">{{ gpu.t170.preflight.ok ? '통과' : '실패' }}</b></p>
-                            <p v-for="item in gpu.t170.preflight.items" :key="item.item" class="font-mono" :class="item.ok ? 'text-zinc-500' : 'text-rose-400'">
-                                {{ item.ok ? '[ok]' : '[FAIL]' }} {{ item.item }}
-                                <template v-if="item.detail"> — <span class="whitespace-pre-wrap">{{ item.detail }}</span></template>
-                            </p>
-                        </div>
-                        <p class="mt-2 text-[10px] leading-relaxed text-zinc-500">
-                            <span v-if="gpu.t170.message" :class="gpu.t170.error ? 'text-rose-400' : 'text-emerald-400'">{{ gpu.t170.message }}</span>
-                            서빙 권장: match(+250/1400/300W). +300/+350 프로파일은 벤치 전용(실서빙 장기 부하에서 Xid 13 이력).
-                            HBM NDIV는 gate 검증 전 UNVERIFIED — serving 검증점 70, 벤치 상한 ~76.
-                            이 카드의 FBPA privilege mask가 열려 있지 않으면 NDIV 레버는 사용 불가(unlock 필요).
-                        </p>
-                    </div>
+                <div v-if="gpuTuningExpanded"><div v-for="gpu in gpuTuning.gpus" :key="gpu.uuid" class="mt-3 grid gap-3 rounded border border-zinc-800 p-3 lg:items-end" :class="isWindows ? 'lg:grid-cols-[minmax(180px,1fr)_130px_150px_130px_auto]' : 'lg:grid-cols-[minmax(180px,1fr)_130px_150px_auto]'">
+                    <div><div class="flex flex-wrap items-center gap-2"><div class="text-xs font-semibold">GPU {{ gpu.index }} · {{ gpu.profile === 'cmp_170hx' ? 'CMP 170HX' : gpu.name }}</div><span class="rounded border px-1.5 py-0.5 text-[9px]" :class="gpu.configured?.enabled === false ? 'border-zinc-700 text-zinc-500' : gpu.configured?.enabled ? 'border-indigo-500/30 text-indigo-300' : 'border-zinc-800 text-zinc-600'">{{ gpu.configured?.enabled === false ? '적용 꺼짐' : gpu.configured?.enabled ? '부팅 적용' : '미설정' }}</span></div><div class="mt-1 font-mono text-[9px] text-zinc-600">{{ gpu.uuid }}</div><div class="mt-1 text-[10px] text-zinc-500">현재 {{ gpu.power_draw ?? '--' }}W · Core {{ gpu.clock_current ?? '--' }}MHz · Memory {{ gpu.memory_clock_current ?? '--' }}MHz · Fan {{ gpu.fan_speed ?? '--' }}%</div></div>
+                    <label class="text-[10px] text-zinc-500">Power ({{ gpu.power_min }}–{{ gpu.power_max }}W)<input type="number" v-model.number="gpu.edit.power_limit" :min="gpu.power_min" :max="gpu.power_max" :disabled="!autoStart.gpu_tuning_enabled" class="input-base mt-1 w-full text-right disabled:opacity-40"></label>
+                    <label class="text-[10px] text-zinc-500">Core max (idle 자동)<input type="number" v-model.number="gpu.edit.clock_max" min="210" :max="gpu.clock_hardware_max" :disabled="!autoStart.gpu_tuning_enabled" class="input-base mt-1 w-full text-right disabled:opacity-40"></label>
+                    <label v-if="isWindows" class="text-[10px] text-zinc-500">Fan (0=자동, 20–100%)<input type="number" v-model.number="gpu.edit.fan_percent" min="0" max="100" :disabled="!gpu.fan_supported || !autoStart.gpu_tuning_enabled" class="input-base mt-1 w-full text-right disabled:opacity-40"></label>
+                    <div class="flex flex-wrap gap-2"><button @click="applyGpuTuning(gpu)" :disabled="gpuTuningSaving || !autoStart.gpu_tuning_enabled" class="rounded bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-40">적용</button><button @click="resetGpuTuning(gpu)" :disabled="gpuTuningSaving || !autoStart.gpu_tuning_enabled" class="rounded border border-zinc-700 px-3 py-2 text-xs text-zinc-400 hover:bg-zinc-800 disabled:opacity-40">권장 기본값</button><button @click="disableGpuTuning(gpu)" :disabled="gpuTuningSaving || !autoStart.gpu_tuning_enabled || gpu.configured?.enabled === false" class="rounded border border-zinc-800 px-3 py-2 text-xs text-zinc-500 hover:bg-zinc-800 disabled:opacity-40">적용 끄기</button></div>
                 </div></div>
             </div>
             <div v-if="motherboardFans.platform" class="mt-4 rounded-lg border border-zinc-800 bg-zinc-950/40 p-4">
@@ -438,7 +360,7 @@
         </section>
 
         <!-- Services (Cards) -->
-        <section class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+        <section class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-5">
             
             <!-- Telegram Bot -->
             <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition">
@@ -509,98 +431,63 @@
                 </div>
             </div>
 
-            <!-- DeepSeek Harness -->
+            <!-- ComfyUI -->
             <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition relative overflow-hidden">
-                <div v-if="status.deepseek_harness" class="absolute top-0 right-0 bg-cyan-500/10 border-b border-l border-cyan-500/20 text-cyan-300 text-[10px] font-semibold px-2 py-1 rounded-bl-lg">TAILSCALE</div>
+                <div v-if="status.comfyui" class="absolute top-0 right-0 bg-indigo-500/10 border-b border-l border-indigo-500/20 text-indigo-400 text-[10px] font-semibold px-2 py-1 rounded-bl-lg">VRAM Active</div>
                 <div class="flex justify-between items-start mb-4">
                     <div>
-                        <div class="flex items-center gap-2">
-                            <h3 class="text-base font-semibold text-zinc-100">DeepSeek Harness</h3>
-                            <span class="rounded border border-zinc-700 px-1.5 py-0.5 font-mono text-[9px] text-zinc-500">:{{ servicePorts.deepseekHarness }}</span>
-                        </div>
-                        <p class="text-xs text-zinc-500 mt-1">Local-first coding agent Web UI</p>
+                        <h3 class="text-base font-semibold text-zinc-100">ComfyUI</h3>
                     </div>
                     <div class="flex items-center gap-2">
                         <span class="flex h-2 w-2 relative">
-                            <span v-if="status.deepseek_harness" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                            <span class="relative inline-flex rounded-full h-2 w-2" :class="status.deepseek_harness ? 'bg-emerald-500' : 'bg-zinc-600'"></span>
+                            <span v-if="status.comfyui" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                            <span class="relative inline-flex rounded-full h-2 w-2" :class="status.comfyui ? 'bg-emerald-500' : 'bg-zinc-600'"></span>
                         </span>
-                        <button @click="forceKill('deepseek_harness')" :disabled="!status.deepseek_harness" class="text-[10px] bg-zinc-800 hover:bg-rose-900/40 hover:text-rose-400 text-zinc-400 px-2 py-0.5 rounded border border-zinc-700 transition disabled:opacity-30" title="Force Kill">Kill</button>
+                        <button @click="forceKill('comfyui')" class="text-[10px] bg-zinc-800 hover:bg-rose-900/40 hover:text-rose-400 text-zinc-400 px-2 py-0.5 rounded border border-zinc-700 transition" title="Force Kill requires confirmation">Kill</button>
                     </div>
                 </div>
-                <p class="mb-4 text-[11px] leading-relaxed" :class="deepseekHarnessAvailable ? 'text-cyan-300/80' : 'text-amber-400'">
-                    {{ deepseekHarnessInstallMessage || (deepseekHarnessAvailable ? '127.0.0.1 전용 · Start 시 Tailscale Serve 자동 연결' : 'Start 시 Node.js와 dsh를 자동 설치합니다.') }}
-                </p>
+                
                 <div class="mt-auto space-y-2">
-                    <button v-if="!status.deepseek_harness" @click="controlServer('deepseek_harness','start')" :disabled="loading.deepseek_harness" class="w-full py-2.5 rounded-lg font-medium text-sm bg-zinc-100 text-zinc-900 hover:bg-white disabled:opacity-50 transition">{{ loading.deepseek_harness ? 'Preparing & Starting…' : 'Start Service' }}</button>
-                    <button v-else @click="controlServer('deepseek_harness','stop')" :disabled="loading.deepseek_harness" class="w-full py-2.5 rounded-lg font-medium text-sm border border-zinc-700 bg-zinc-800 text-zinc-300 hover:bg-zinc-700 disabled:opacity-50 transition">Stop Service</button>
+                    <div class="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
+                        <div class="mb-2 flex items-center justify-between gap-2">
+                            <span class="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Launch Options</span>
+                            <span v-if="comfySettingsSaving" class="text-[10px] text-amber-400">Saving</span>
+                        </div>
+                        <div class="grid grid-cols-1 gap-2 text-xs text-zinc-300">
+                            <label class="flex items-center justify-between gap-3 rounded-md border border-sky-500/20 bg-sky-500/5 px-2.5 py-2">
+                                <span class="font-mono text-[11px] text-sky-300">Physical GPU</span>
+                                <select v-model="comfySettings.gpu_device" @change="saveComfySettings" class="max-w-[65%] rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-[11px]">
+                                    <option value="">All visible</option>
+                                    <option v-for="gpu in gpuTopology.gpus" :key="'comfy-'+gpu.uuid" :value="gpu.uuid">GPU {{gpu.index}} · {{gpu.name}}</option>
+                                </select>
+                            </label>
+                            <label v-for="option in comfyOptionDefs" :key="option.key" class="flex items-center justify-between gap-3 rounded-md border border-zinc-800 bg-zinc-900/70 px-2.5 py-2">
+                                <span class="font-mono text-[11px] text-zinc-300">{{ option.label }}</span>
+                                <input type="checkbox" v-model="comfySettings[option.key]" @change="saveComfySettings" class="h-4 w-4 rounded border-zinc-700 bg-zinc-800 text-indigo-500 focus:ring-indigo-500/50 focus:ring-offset-zinc-950">
+                            </label>
+                            <label class="flex items-center justify-between gap-3 rounded-md border border-zinc-800 bg-zinc-900/70 px-2.5 py-2">
+                                <span class="flex items-center gap-2 font-mono text-[11px]"><input type="checkbox" v-model="comfySettings.reserve_vram_enabled" @change="saveComfySettings"> --reserve-vram</span>
+                                <input type="number" min="0" step="0.25" v-model.number="comfySettings.reserve_vram" @change="saveComfySettings" :disabled="!comfySettings.reserve_vram_enabled" class="w-20 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-right text-[11px] disabled:opacity-40"><span class="text-[10px] text-zinc-500">GB</span>
+                            </label>
+                            <div class="block rounded-md border border-zinc-800 bg-zinc-900/70 px-2.5 py-2">
+                                <div class="flex items-center justify-between gap-2"><span class="font-mono text-[11px] text-zinc-300">Custom arguments</span><button @click="saveComfySettings" :disabled="comfySettingsSaving" class="rounded border border-zinc-700 px-2 py-0.5 text-[9px] text-zinc-400 hover:bg-zinc-800 disabled:opacity-40">저장</button></div>
+                                <textarea v-model="comfySettings.custom_args" @change="saveComfySettings" rows="2" spellcheck="false" placeholder="예: --mmap-torch-files --verbose DEBUG" class="mt-2 w-full resize-y rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 font-mono text-[10px] leading-relaxed text-zinc-300 outline-none focus:border-indigo-500"></textarea>
+                                <span class="mt-1 block text-[9px] leading-relaxed text-zinc-600">공백과 따옴표를 인자 단위로 해석해 저장합니다. 셸 명령은 실행하지 않습니다.</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button v-if="!status.comfyui" @click="controlServer('comfyui', 'start')" :disabled="loading.comfyui" class="w-full py-2.5 rounded-lg font-medium text-sm bg-zinc-100 text-zinc-900 hover:bg-white disabled:opacity-50 transition">Start Service</button>
+                    <button v-else @click="controlServer('comfyui', 'stop')" :disabled="loading.comfyui" class="w-full py-2.5 rounded-lg font-medium text-sm border border-zinc-700 bg-zinc-800 text-zinc-300 hover:bg-zinc-700 disabled:opacity-50 transition">Stop Service</button>
+                    
                     <div class="flex gap-2">
-                        <a v-if="status.deepseek_harness && deepseekHarnessUrl" :href="deepseekHarnessUrl" target="_blank" rel="noopener noreferrer" class="flex-1 flex justify-center items-center py-2 rounded-lg text-xs font-medium border border-zinc-800 bg-zinc-800/50 text-cyan-300 hover:bg-zinc-800 hover:border-zinc-700 transition">Web UI</a>
-                        <button v-else disabled class="flex-1 py-2 rounded-lg text-xs font-medium border border-zinc-800 bg-zinc-800/30 text-zinc-600 cursor-not-allowed">{{ status.deepseek_harness ? 'Starting…' : 'Web UI' }}</button>
-                        <button @click="openLogModal('deepseek_harness')" class="flex-1 py-2 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 transition">Log</button>
-                        <button @click="openFolder('deepseek_harness')" class="px-3 py-2 rounded-lg text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 transition" title="Open workspace">
+                        <a :href="serviceUrl(servicePorts.comfyui)" target="_blank" rel="noopener noreferrer" class="flex-1 flex justify-center items-center py-2 rounded-lg text-xs font-medium border border-zinc-800 bg-zinc-800/50 text-indigo-300 hover:bg-zinc-800 hover:border-zinc-700 transition">Web UI</a>
+                        <button @click="openLogModal('comfyui')" class="flex-1 py-2 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 transition border border-transparent">Log</button>
+                        <button @click="openTerminal('comfyui')" class="flex-1 py-2 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 transition border border-transparent">Console</button>
+                        <button @click="openFolder('comfyui')" class="px-3 py-2 rounded-lg text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 transition" title="Open Folder">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
                         </button>
                     </div>
-                </div>
-            </div>
-
-            <!-- ComfyUI -->
-            <!-- ComfyUI -->
-            <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition relative overflow-hidden">
-                <div v-if="status.comfyui || status.comfyui_gpu1" class="absolute top-0 right-0 bg-indigo-500/10 border-b border-l border-indigo-500/20 text-indigo-400 text-[10px] font-semibold px-2 py-1 rounded-bl-lg">VRAM Active</div>
-                <div class="flex justify-between items-start mb-4">
-                    <div class="flex items-center gap-2">
-                        <h3 class="text-base font-semibold text-zinc-100">ComfyUI</h3>
-                        <span class="rounded border border-zinc-700 px-1.5 py-0.5 font-mono text-[9px] text-zinc-500">{{ comfyInstances.length }} INST</span>
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <span class="flex h-2 w-2 relative">
-                            <span v-if="status.comfyui || status.comfyui_gpu1" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                            <span class="relative inline-flex rounded-full h-2 w-2" :class="(status.comfyui || status.comfyui_gpu1) ? 'bg-emerald-500' : 'bg-zinc-600'"></span>
-                        </span>
-                    </div>
-                </div>
-
-                <!-- 인스턴스별 압축 행: 상태 + 실행 인자 요약(클릭 → 모달) + 컨트롤 -->
-                <div class="space-y-2">
-                    <div v-for="inst in comfyInstances" :key="inst.key" class="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
-                        <div class="flex items-center justify-between gap-2">
-                            <div class="flex min-w-0 items-center gap-2">
-                                <span class="relative flex h-2 w-2 shrink-0">
-                                    <span v-if="comfyState[inst.key]" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                                    <span class="relative inline-flex rounded-full h-2 w-2" :class="comfyState[inst.key] ? 'bg-emerald-500' : 'bg-zinc-600'"></span>
-                                </span>
-                                <span class="truncate text-[10px] font-semibold uppercase tracking-wider text-zinc-500">{{ comfyShortLabel(inst) }} · :{{ inst.port }}</span>
-                            </div>
-                            <button @click="forceKill(comfyServiceName(inst.key))" class="shrink-0 rounded border border-zinc-700 bg-zinc-800 px-1.5 py-0.5 text-[9px] text-zinc-500 transition hover:bg-rose-900/40 hover:text-rose-400" title="Force Kill">Kill</button>
-                        </div>
-
-                        <!-- 실행 인자는 모달로 계층화: 카드는 요약 칩 한 줄만 점유 -->
-                        <button @click="openComfyArgs(inst.key)" class="mt-2 flex w-full items-center justify-between gap-2 rounded-md border border-zinc-800 bg-zinc-900/70 px-2.5 py-1.5 text-left transition hover:border-indigo-500/40">
-                            <span class="flex min-w-0 flex-wrap items-center gap-1">
-                                <span class="rounded bg-sky-500/10 px-1.5 py-0.5 font-mono text-[9px] text-sky-300">{{ comfyGpuTag(inst.key) }}</span>
-                                <span v-if="comfyActiveArgCount(inst.key)" class="rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[9px] text-zinc-400">args {{ comfyActiveArgCount(inst.key) }}</span>
-                                <span v-if="comfySettings[inst.key] && comfySettings[inst.key].custom_args" class="rounded bg-amber-500/10 px-1.5 py-0.5 font-mono text-[9px] text-amber-300">manual</span>
-                                <span v-if="!comfyActiveArgCount(inst.key)" class="font-mono text-[9px] text-zinc-600">실행 인자 없음</span>
-                            </span>
-                            <svg class="h-3.5 w-3.5 shrink-0 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-                        </button>
-
-                        <div class="mt-2 flex gap-2">
-                            <button v-if="!comfyState[inst.key]" @click="controlServer('comfyui', 'start', inst.key)" :disabled="loading.comfyui" class="flex-1 py-2 rounded-lg font-medium text-xs bg-zinc-100 text-zinc-900 hover:bg-white disabled:opacity-50 transition">Start</button>
-                            <button v-else @click="controlServer('comfyui', 'stop', inst.key)" :disabled="loading.comfyui" class="flex-1 py-2 rounded-lg font-medium text-xs border border-zinc-700 bg-zinc-800 text-zinc-300 hover:bg-zinc-700 disabled:opacity-50 transition">Stop</button>
-                            <a :href="serviceUrl(inst.port)" target="_blank" rel="noopener noreferrer" class="flex-1 flex justify-center items-center py-2 rounded-lg text-xs font-medium border border-zinc-800 bg-zinc-800/50 text-indigo-300 hover:bg-zinc-800 hover:border-zinc-700 transition">Web UI</a>
-                            <button @click="openLogModal(comfyServiceName(inst.key))" class="flex-1 py-2 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 transition border border-transparent">Log</button>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="mt-auto flex gap-2 pt-3">
-                    <button @click="openTerminal('comfyui')" class="flex-1 py-2 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 transition border border-transparent">Console</button>
-                    <button @click="openFolder('comfyui')" class="px-3 py-2 rounded-lg text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 transition" title="Open Folder">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
-                    </button>
                 </div>
             </div>
 
@@ -877,35 +764,6 @@
                                 <span class="font-mono text-xs">--flash-attn on</span>
                             </label>
                         </div>
-
-                        <!-- Manual arguments (server-side persisted) -->
-                        <div class="mt-5 pt-4 border-t border-zinc-800">
-                            <div class="text-[11px] font-semibold text-zinc-500 uppercase tracking-widest mb-1">Manual Arguments</div>
-                            <p class="text-[10px] text-zinc-600 mb-3 leading-relaxed">
-                                수동 인자는 명령어 <span class="text-zinc-400">맨 마지막</span>에 붙습니다(같은 플래그면 여기 값이 우선).<br>
-                                입력 즉시 서버(llama_settings.json)에 저장되어 재시작·다른 PC 접속 후에도 그대로 유지됩니다.
-                            </p>
-                            <div class="grid grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-5">
-                                <div class="flex flex-col">
-                                    <label class="text-[11px] text-zinc-400 mb-1.5">Tensor Read Lazy (--tensor-read-lazy)</label>
-                                    <select v-model="config.tensorReadLazy" @change="saveLlamaArgs" class="input-base text-xs">
-                                        <option value="auto">Auto (전달 안 함 · 구버전 안전)</option>
-                                        <option value="on">on</option>
-                                        <option value="off">off</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <label class="text-[11px] text-zinc-400 mb-1.5 mt-4 block">수동 인자 (공백 구분, 따옴표 지원)</label>
-                            <textarea v-model="config.customArgs" @change="saveLlamaArgs" rows="2" spellcheck="false"
-                                placeholder="예: --jinja --no-extra-eos --chat-template-kwargs '{&quot;thinking&quot;:false}'"
-                                class="w-full resize-y rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 font-mono text-[10px] leading-relaxed text-zinc-300 outline-none focus:border-indigo-500"></textarea>
-                            <div class="flex items-center justify-between mt-1.5">
-                                <span class="text-[10px]" :class="llamaArgsSaved ? 'text-emerald-400' : 'text-zinc-600'">
-                                    {{ llamaArgsSaved ? '서버에 저장됨 ✓' : '변경 시 자동 저장' }}
-                                </span>
-                                <button @click="saveLlamaArgs" class="text-[10px] px-2 py-1 rounded border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition">Save</button>
-                            </div>
-                        </div>
                     </div>
 
                 </div>
@@ -994,68 +852,6 @@
 
                     <div class="border-t border-zinc-800 bg-zinc-950 px-4 py-3 sm:hidden">
                         <button @click="closeLogModal" class="w-full rounded-lg bg-zinc-100 py-2.5 text-sm font-semibold text-zinc-950 hover:bg-white">Close Log</button>
-                    </div>
-                </div>
-            </div>
-        </transition>
-
-        <!-- ComfyUI Launch Args Modal -->
-        <transition name="fade">
-            <div v-if="comfyArgsModal.show" class="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6" @click.self="closeComfyArgs">
-                <div class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
-
-                <div class="relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl">
-                    <div class="flex items-center justify-between gap-3 border-b border-zinc-800 bg-zinc-950 px-5 py-3">
-                        <div class="min-w-0">
-                            <h3 class="truncate text-sm font-semibold text-zinc-100">ComfyUI 실행 인자 · {{ comfyModalInstance.label }}</h3>
-                            <p class="mt-0.5 text-[10px] text-zinc-600">변경 즉시 서버에 저장되며 Start 시 이 값으로 기동합니다 · 포트 :{{ comfyModalInstance.port }}</p>
-                        </div>
-                        <button @click="closeComfyArgs" class="shrink-0 text-zinc-500 transition hover:text-zinc-200" title="Close">
-                            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                        </button>
-                    </div>
-
-                    <div class="modal-scroll-lock min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
-                        <label class="flex items-center justify-between gap-3 rounded-md border border-sky-500/20 bg-sky-500/5 px-3 py-2.5">
-                            <span class="font-mono text-[11px] text-sky-300">Physical GPU</span>
-                            <select v-model="comfySettings[comfyArgsModal.instance].gpu_device" @change="saveComfySettings(comfyArgsModal.instance)" class="max-w-[65%] rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-[11px]">
-                                <option value="">All visible</option>
-                                <option v-for="gpu in gpuTopology.gpus" :key="'args-'+comfyArgsModal.instance+'-'+gpu.uuid" :value="gpu.uuid">GPU {{gpu.index}} · {{gpu.name}}</option>
-                            </select>
-                        </label>
-
-                        <!-- 2단 그리드로 모달 높이도 압축 -->
-                        <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                            <label v-for="option in comfyOptionDefs" :key="'args-'+comfyArgsModal.instance+option.key" class="flex items-center justify-between gap-3 rounded-md border border-zinc-800 bg-zinc-900/70 px-2.5 py-2">
-                                <span class="font-mono text-[11px] text-zinc-300">{{ option.label }}</span>
-                                <input type="checkbox" v-model="comfySettings[comfyArgsModal.instance][option.key]" @change="saveComfySettings(comfyArgsModal.instance)" class="h-4 w-4 shrink-0 rounded border-zinc-700 bg-zinc-800 text-indigo-500 focus:ring-indigo-500/50 focus:ring-offset-zinc-950">
-                            </label>
-                        </div>
-
-                        <label class="flex items-center justify-between gap-3 rounded-md border border-zinc-800 bg-zinc-900/70 px-2.5 py-2">
-                            <span class="flex items-center gap-2 font-mono text-[11px]"><input type="checkbox" v-model="comfySettings[comfyArgsModal.instance].reserve_vram_enabled" @change="saveComfySettings(comfyArgsModal.instance)"> --reserve-vram</span>
-                            <input type="number" min="0" step="0.25" v-model.number="comfySettings[comfyArgsModal.instance].reserve_vram" @change="saveComfySettings(comfyArgsModal.instance)" :disabled="!comfySettings[comfyArgsModal.instance].reserve_vram_enabled" class="w-20 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-right text-[11px] disabled:opacity-40"><span class="text-[10px] text-zinc-500">GB</span>
-                        </label>
-
-                        <div class="rounded-md border border-zinc-800 bg-zinc-900/70 px-2.5 py-2">
-                            <div class="flex items-center justify-between gap-2"><span class="font-mono text-[11px] text-zinc-300">Custom arguments</span><button @click="saveComfySettings(comfyArgsModal.instance)" :disabled="comfySettingsSaving" class="rounded border border-zinc-700 px-2 py-0.5 text-[9px] text-zinc-400 hover:bg-zinc-800 disabled:opacity-40">저장</button></div>
-                            <textarea v-model="comfySettings[comfyArgsModal.instance].custom_args" @change="saveComfySettings(comfyArgsModal.instance)" rows="3" spellcheck="false" placeholder="예: --mmap-torch-files --verbose DEBUG" class="mt-2 w-full resize-y rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 font-mono text-[10px] leading-relaxed text-zinc-300 outline-none focus:border-indigo-500"></textarea>
-                            <span class="mt-1 block text-[9px] leading-relaxed text-zinc-600">공백과 따옴표를 인자 단위로 해석해 저장합니다. 셸 명령은 실행하지 않습니다.</span>
-                        </div>
-
-                        <!-- Llama.cpp Configurator와 동일한 명령어 프리뷰 -->
-                        <div class="rounded-lg border border-zinc-800 bg-[#0c0c0e] p-3 shadow-inner">
-                            <div class="mb-2 text-[10px] font-semibold uppercase tracking-widest text-zinc-500">Execution Preview</div>
-                            <pre class="max-h-28 overflow-y-auto whitespace-pre-wrap break-all font-mono text-[10px] leading-relaxed text-zinc-400">{{ comfyArgsPreview(comfyArgsModal.instance) }}</pre>
-                        </div>
-                    </div>
-
-                    <div class="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-800 bg-zinc-950 px-5 py-3">
-                        <span class="text-[10px]" :class="comfySettingsSaving ? 'text-indigo-400' : 'text-zinc-600'">{{ comfySettingsSaving ? '저장 중...' : '체크/입력 즉시 자동 저장됨' }}</span>
-                        <div class="flex gap-2">
-                            <button @click="controlServer('comfyui', comfyState[comfyArgsModal.instance] ? 'stop' : 'start', comfyArgsModal.instance)" :disabled="loading.comfyui" class="rounded-lg px-3 py-1.5 text-xs font-medium" :class="comfyState[comfyArgsModal.instance] ? 'border border-zinc-700 bg-zinc-800 text-zinc-300 hover:bg-zinc-700' : 'bg-indigo-600 text-white hover:bg-indigo-500'">{{ comfyState[comfyArgsModal.instance] ? 'Stop Service' : '이 설정으로 Start' }}</button>
-                            <button @click="closeComfyArgs" class="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-300 transition hover:bg-zinc-700">Close</button>
-                        </div>
                     </div>
                 </div>
             </div>
@@ -1247,18 +1043,12 @@
                         gpu_temp: null, gpu_hotspot: null, gpu_fan: null, gpu_power: null,
                         lhm_available: false
                     },
-                    status: { comfyui: false, comfyui_gpu1: false, llamacpp: false, vllm: false, telegram_bot: false, watcher: false, unsloth: false, deepseek_harness: false, initialization: {ready:false, message:'백그라운드 초기화 대기 중'} },
-                    comfyState: { main: false, gpu1: false },
-                    comfyInstances: [
-                        { key: 'main', label: 'ComfyUI · 메인(GPU0)', service: 'comfyui', port: 8188 },
-                        { key: 'gpu1', label: 'ComfyUI · 보조(GPU1)', service: 'comfyui_gpu1', port: 8189 }
-                    ],
-                    loading: { comfyui: false, llamacpp: false, vllm: false, bot: false, watcher: false, unsloth: false, deepseek_harness: false, status: false },
+                    status: { comfyui: false, llamacpp: false, vllm: false, telegram_bot: false, watcher: false, unsloth: false, initialization: {ready:false, message:'백그라운드 초기화 대기 중'} },
+                    loading: { comfyui: false, llamacpp: false, vllm: false, bot: false, watcher: false, unsloth: false, status: false },
                     scanData: { versions:[], models:[] },
                     logModal: { show: false, server: '', title: '', content: '', autoScroll: true },
                     logTimer: null, hwTimer: null,
-                    gpuTopology: { available: false, gpus: [], services: {}, arbiter: { enabled: false, gpus: {} } },
-                    arbiterBusy: '',
+                    gpuTopology: { available: false, gpus: [], services: {} },
                     gpuTuning: { available: false, gpus: [] }, gpuTuningSaving: false,
                     cmp170Unlock: { available:false, detected:false, unlocked:false, memory_mib:null, staged_inf:'', autostart:false, running:false, action:'', status:'unknown', message:'상태 확인 중', last_log:[] },
                     cmp170Busy: false,
@@ -1270,17 +1060,30 @@
                     expandedGpus: {},
                     gpuTuningExpanded: false, motherboardFansExpanded: false,
                     managerService: { enabled: false },
-                    servicePorts: { comfyui: 8188, llama: 8080, vllm: 8000, unsloth: 8890, deepseekHarness: 3080 },
+                    servicePorts: { comfyui: 8188, llama: 8080, vllm: 8000, unsloth: 8890 },
                     unslothAvailable: false,
-                    deepseekHarnessAvailable: false, deepseekHarnessUrl: '', deepseekHarnessInstallMessage: '',
-                    autoStart: { autostart: false, autostart_llama: false, autostart_comfyui: false, autostart_comfyui_gpu1: false, autostart_bot: false, autostart_watcher: false, autostart_vllm: false, autostart_unsloth: false, autostart_deepseek_harness: false, gpu_tuning_enabled: true },
+                    autoStart: { autostart: false, autostart_llama: false, autostart_comfyui: false, autostart_bot: false, autostart_watcher: false, autostart_vllm: false, autostart_unsloth: false, gpu_tuning_enabled: true },
                     autoStartDefs: [
-                        { key: 'autostart_comfyui', label: 'ComfyUI' }, { key: 'autostart_comfyui_gpu1', label: 'ComfyUI(GPU1)' }, { key: 'autostart_llama', label: 'llama.cpp' }, { key: 'autostart_vllm', label: 'vLLM' },
-                        { key: 'autostart_bot', label: 'Bot' }, { key: 'autostart_watcher', label: 'Watcher' }, { key: 'autostart_unsloth', label: 'Unsloth' }, { key: 'autostart_deepseek_harness', label: 'DeepSeek Harness' }
+                        { key: 'autostart_comfyui', label: 'ComfyUI' }, { key: 'autostart_llama', label: 'llama.cpp' }, { key: 'autostart_vllm', label: 'vLLM' },
+                        { key: 'autostart_bot', label: 'Bot' }, { key: 'autostart_watcher', label: 'Watcher' }, { key: 'autostart_unsloth', label: 'Unsloth' }
                     ],
-                    comfySettings: { main: {}, gpu1: {} },
+                    comfySettings: {
+                        listen: true,
+                        use_sage_attention: true,
+                        disable_cuda_malloc: true,
+                        disable_pinned_memory: true,
+                        preview_method_none: false,
+                        cache_none: false,
+                        reserve_vram_enabled: true,
+                        reserve_vram: 1,
+                        disable_async_offload: false,
+                        disable_dynamic_vram: true,
+                        fast_disk: false,
+                        fast_fp16_accumulation: false,
+                        gpu_device: '',
+                        custom_args: ''
+                    },
                     comfySettingsSaving: false,
-                    comfyArgsModal: { show: false, instance: 'main' },
                     comfyOptionDefs: [
                         { key: 'listen', label: '--listen 0.0.0.0' },
                         { key: 'use_sage_attention', label: '--use-sage-attention' },
@@ -1309,10 +1112,8 @@
                         reasoningMode: "auto", reasoningBudget: "", ngl: "auto", fitTarget: "1024", nPredict: "-1", parallel: "1", threads: "",
                         batchSize: "", ubatchSize: "", threadsBatch: "", ctxCheckpoints: "", cacheRam: "", cacheReuse: "",
                         splitMode: "", tensorSplit: "", mainGpu: "", cpuMoe: false, cpuMoeLayers: "",
-                        specType: "", specDraftNMax: "4", specDraftModel: "", specDraftNgl: "", gpuDevices: [],
-                        tensorReadLazy: "auto", customArgs: ""
+                        specType: "", specDraftNMax: "4", specDraftModel: "", specDraftNgl: "", gpuDevices: []
                     },
-                    llamaArgsSaved: false,
                     hwHistoryModal: { show: false, history: [] },
                     hwHistoryTimer: null,
                     desktop: { switching: '' },
@@ -1321,11 +1122,6 @@
                 };
             },
             computed: {
-                comfyModalInstance() {
-                    return this.comfyInstances.find(item => item.key === this.comfyArgsModal.instance)
-                        || this.comfyInstances[0]
-                        || { key: 'main', label: 'ComfyUI', port: 8188 };
-                },
                 manualFanName() {
                     const id = this.motherboardFans.runtime?.manual_channel_id;
                     return (this.motherboardFans.channels || []).find(fan => fan.id === id)?.name || '팬';
@@ -1350,7 +1146,6 @@
                     if (this.config.fit) { cmd.push(`--fit on`); if (this.config.fitTarget) cmd.push(`--fit-target ${this.config.fitTarget}`); }
                     else cmd.push(`--fit off`);
                     if (this.config.flash) cmd.push(`--flash-attn on`);
-                    if (this.config.tensorReadLazy && this.config.tensorReadLazy !== 'auto') cmd.push(`--tensor-read-lazy ${this.config.tensorReadLazy}`);
                     if (this.config.cacheK) cmd.push(`-ctk ${this.config.cacheK}`);
                     if (this.config.cacheV) cmd.push(`-ctv ${this.config.cacheV}`);
                     const valueFlags = {batchSize:'--batch-size',ubatchSize:'--ubatch-size',threadsBatch:'--threads-batch',ctxCheckpoints:'--ctx-checkpoints',cacheRam:'--cache-ram',cacheReuse:'--cache-reuse',splitMode:'--split-mode',tensorSplit:'--tensor-split',mainGpu:'--main-gpu'};
@@ -1363,7 +1158,6 @@
                         if (this.config.specDraftModel) cmd.push(`--spec-draft-model "${this.config.specDraftModel}"`);
                         if (this.config.specDraftNgl) cmd.push(`--spec-draft-ngl ${this.config.specDraftNgl}`);
                     }
-                    if (this.config.customArgs && String(this.config.customArgs).trim()) cmd.push(String(this.config.customArgs).trim());
                     return cmd.join(" ");
                 }
             },
@@ -1472,8 +1266,6 @@
                     }
                     if (!Array.isArray(merged.gpuDevices)) merged.gpuDevices = merged.device ? [merged.device] : [];
                     if (merged.specType === 'draft-mtp') merged.specDraftModel = '';
-                    merged.customArgs = typeof merged.customArgs === 'string' ? merged.customArgs : '';
-                    if (!['auto', 'on', 'off'].includes(merged.tensorReadLazy)) merged.tensorReadLazy = 'auto';
                     const clean = {};
                     for (const key of Object.keys(this.config)) clean[key] = merged[key] === undefined ? this.config[key] : merged[key];
                     return clean;
@@ -1481,75 +1273,6 @@
 
                 async fetchGpuTopology() {
                     try { const res = await fetch('/api/gpus'); this.gpuTopology = await res.json(); } catch (e) {}
-                },
-                // VRAM Arbiter — 사용자의 선택 단위는 GPU뿐입니다. 상태는 /api/gpus 응답에
-                // 함께 오므로 별도 폴링 주기를 늘리지 않습니다.
-                arbiterFor(uuid) { return this.gpuTopology.arbiter?.gpus?.[uuid] || {}; },
-                // 예상 VRAM 값이 어디서 왔는지 사용자에게 설명한다 (§15: 직접 설정 불필요).
-                arbiterSourceLabel(source) {
-                    return { config: '수동 지정', learned: '실측 학습', file: 'GGUF 크기', unknown: '첫 실행 · free 충분하면 eviction 없음' }[source] || source;
-                },
-                // GPU 별 evict threshold = "이번 요청 예상 VRAM 이 이 카드 총 VRAM 의 몇 %" 기준.
-                // 사용률(used/total) 기준이 아니라는 점을 UI 에서도 명확히 한다.
-                arbiterThresholdHelp(uuid) {
-                    const entry = this.arbiterFor(uuid) || {};
-                    const totalGb = ((entry.total_vram_mb ?? 0) / 1024).toFixed(0);
-                    const pct = entry.evict_threshold_percent ?? 0;
-                    const cutGb = ((entry.total_vram_mb ?? 0) * pct / 100 / 1024).toFixed(1);
-                    const lines = [
-                        '이 GPU 의 Evict threshold 는 “이번 요청의 예상 VRAM 이 이 카드 총 VRAM 의 몇 % 인지” 기준입니다. (GPU 사용률이 아닙니다)',
-                        `현재: ${pct}% → 예상 ${cutGb} GB 이상인 요청만 resident eviction 허용 (총 ${totalGb} GB)`,
-                        '',
-                        '판단 순서:',
-                        '  1) free >= 예상 + 마진 → 그대로 공존, eviction 없음 (threshold·UNKNOWN 무관)',
-                        '  2) free 부족 + 예상 ≥ threshold → 같은 GPU 의 상주 모델(RESIDENT) 을 LRU 로 내림',
-                        '  3) free 부족 + 예상 < threshold → 상주를 내리지 않고 그냥 진행',
-                        '  4) 예상 VRAM 을 아직 모르는 첫 실행(UNKNOWN) + free 부족 → 큰 요청으로 간주해 eviction 허용',
-                        '',
-                        '※ 3 번에서 요청은 상주 모델을 지켜준 대가로 VRAM 부족(OOM) 이 날 수 있습니다. 의도된 동작입니다.',
-                        '※ 0 으로 두면 부족할 때마다 항상 eviction 합니다.',
-                        '※ 이 값은 GPU 마다 독립입니다. GPU0 설정은 GPU1 요청에 영향 주지 않습니다.',
-                    ];
-                    return lines.join('\n');
-                },
-                arbiterStateClass(state) {
-                    return {
-                        RESIDENT: 'border-sky-500/30 bg-sky-500/10 text-sky-300',
-                        ACTIVE: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300',
-                        LOADING: 'border-indigo-500/30 bg-indigo-500/10 text-indigo-300',
-                        UNLOADING: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
-                        ERROR: 'border-rose-500/40 bg-rose-500/10 text-rose-300',
-                    }[state] || 'border-zinc-700 text-zinc-500';
-                },
-                async toggleArbiter(uuid, enabled) {
-                    const gpu = this.gpuTopology.gpus.find(item => item.uuid === uuid) || {};
-                    const message = enabled
-                        ? `GPU ${gpu.index ?? ''} (${gpu.name ?? ''}) VRAM Arbiter를 켤까요?\n\n이 GPU의 ComfyUI / llama.cpp가 자동 관리 대상이 됩니다.\nidle이라는 이유로는 모델을 내리지 않고, VRAM이 실제로 모자랄 때만 가장 오래 사용된 상주 모델부터 내립니다. 작업 중(ACTIVE)은 중단하지 않습니다.`
-                        : `GPU ${gpu.index ?? ''} (${gpu.name ?? ''}) VRAM Arbiter를 끌까요?\n\n이 GPU에서는 아무것도 제어하지 않습니다. 이미 올라간 모델은 그대로 남아 있고 요청도 기존 방식대로 처리됩니다.`;
-                    if (!confirm(message)) return;
-                    this.arbiterBusy = uuid;
-                    try {
-                        const res = await fetch(`/api/gpu-arbiter/gpus/${uuid}/enable`, {
-                            method: 'POST', headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ enabled }) });
-                        const data = await res.json();
-                        if (!res.ok) throw new Error(data.detail || '설정 실패');
-                        await this.fetchGpuTopology();
-                    } catch (e) { alert('VRAM Arbiter 설정 실패: ' + e.message); }
-                    finally { this.arbiterBusy = ''; }
-                },
-                async setArbiterThreshold(uuid, value) {
-                    const percent = Math.max(0, Math.min(100, parseInt(value, 10) || 0));
-                    this.arbiterBusy = uuid;
-                    try {
-                        const res = await fetch('/api/gpu-arbiter/settings', {
-                            method: 'POST', headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ gpus: { [uuid]: { evict_threshold_percent: percent } } }) });
-                        const data = await res.json();
-                        if (!res.ok) throw new Error(data.detail || '설정 실패');
-                        await this.fetchGpuTopology();
-                    } catch (e) { alert('Evict threshold 설정 실패: ' + e.message); }
-                    finally { this.arbiterBusy = ''; }
                 },
                 async fetchCmp170Unlock() {
                     if (!this.isWindows || this.cmp170Busy) return;
@@ -1623,28 +1346,11 @@
                     try {
                         const res = await fetch('/api/gpu/tuning'); const data = await res.json();
                         if (!res.ok) throw new Error(data.detail || 'GPU 설정 조회 실패');
-                        data.gpus = (data.gpus || []).map(gpu => {
-                            // API 응답의 per-GPU 키는 tune170, UI 상태 키는 t170 (일관성용 별칭)
-                            const src170 = gpu.tune170;
-                            const configured170 = src170?.configured;
-                            const profile = configured170?.profile ?? 'match';
-                            const table = data.tune170?.profiles?.[profile] ?? {};
-                            return {...gpu, edit: {
-                                power_limit: gpu.configured?.power_limit ?? gpu.recommended?.power_limit ?? gpu.power_limit,
-                                clock_max: gpu.configured?.clock_max ?? gpu.recommended?.clock_max ?? gpu.clock_hardware_max,
-                                fan_percent: gpu.configured?.fan_auto ? 0 : (gpu.configured?.fan_percent ?? gpu.recommended?.fan_percent ?? 0),
-                            }, t170: src170 ? {
-                                installed: !!src170.installed,
-                                method: configured170?.method ?? 'nvidia-smi',
-                                enabled: configured170 ? !!configured170.enabled : true,
-                                profile,
-                                offset: configured170?.offset ?? table.offset ?? 250,
-                                clk: configured170?.clk ?? table.clk ?? 1400,
-                                pl: configured170?.pl ?? table.pl ?? 300,
-                                ndiv: configured170?.ndiv ?? 0,
-                                status: null, preflight: null, busy: false, message: null, error: null,
-                            } : null};
-                        });
+                        data.gpus = (data.gpus || []).map(gpu => ({...gpu, edit: {
+                            power_limit: gpu.configured?.power_limit ?? gpu.recommended?.power_limit ?? gpu.power_limit,
+                            clock_max: gpu.configured?.clock_max ?? gpu.recommended?.clock_max ?? gpu.clock_hardware_max,
+                            fan_percent: gpu.configured?.fan_auto ? 0 : (gpu.configured?.fan_percent ?? gpu.recommended?.fan_percent ?? 0),
+                        }}));
                         this.gpuTuning = data;
                     } catch (e) { console.warn(e); }
                 },
@@ -1680,79 +1386,6 @@
                         const data=await res.json(); if(!res.ok) throw new Error(data.detail || '비활성화 실패');
                         await this.fetchGpuTuning();
                     } catch(e) { alert('GPU 설정 비활성화 실패: '+e.message); } finally { this.gpuTuningSaving=false; }
-                },
-                async setTune170Method(gpu) {
-                    gpu.t170.busy = true; gpu.t170.error = false;
-                    try {
-                        const res = await fetch('/api/gpu/tuning170', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action:'method', gpu_uuid:gpu.uuid, method:gpu.t170.method})});
-                        const data = await res.json(); if(!res.ok) throw new Error(data.detail || '방식 변경 실패');
-                        gpu.t170.message = data.message || ('부팅 방식: ' + gpu.t170.method);
-                        await this.fetchGpuTuning();
-                    } catch(e) { gpu.t170.error = true; gpu.t170.message = '방식 변경 실패: ' + e.message; } finally { gpu.t170.busy = false; }
-                },
-                async applyTune170(gpu) {
-                    const t = gpu.t170;
-                    const detail = t.profile === 'custom'
-                        ? `custom(offset +${t.offset}, ceiling ${t.clk ? t.clk+'MHz' : '없음'}, PL ${t.pl || 300}W)`
-                        : `${t.profile}(offset +${t.offset ?? '-'}, ceiling ${t.clk ? t.clk+'MHz' : '잠금 해제'}, PL ${t.pl || 300}W)`;
-                    const ndivNote = t.ndiv ? `, HBM NDIV ${t.ndiv}` : '';
-                    if (!confirm(`GPU ${gpu.index}에 170tune ${detail}${ndivNote}을 적용하고 부팅 설정으로 저장할까요?\n\nnvidia-smi 방식의 잠금(lock)은 먼저 해제됩니다. 실패 시 'stock 리셋'으로 돌아올 수 있습니다.`)) return;
-                    t.busy = true; t.error = false;
-                    try {
-                        const res = await fetch('/api/gpu/tuning170', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({
-                            action:'set', gpu_uuid:gpu.uuid, profile:t.profile,
-                            offset:t.profile === 'custom' ? t.offset : 0,
-                            clk:t.profile === 'custom' ? t.clk : 0,
-                            pl:t.profile === 'custom' ? t.pl : 0,
-                            ndiv:t.ndiv || 0,
-                        })});
-                        const data = await res.json(); if(!res.ok) throw new Error(data.detail || '170tune 적용 실패');
-                        t.message = data.message || '170tune 적용 완료';
-                        if (data.tune170_status) t.status = data.tune170_status;
-                        await this.fetchGpuTuning(); await this.fetchGpuTopology();
-                    } catch(e) { t.error = true; t.message = '170tune 적용 실패: ' + e.message; } finally { t.busy = false; }
-                },
-                async resetTune170(gpu) {
-                    const t = gpu.t170;
-                    if (!confirm(`GPU ${gpu.index}의 170tune 설정을 stock으로 리셋할까요?\n\noffset 0, 클럭 잠금 해제, power 250W. 현재 HBM NDIV가 stock이 아니라면 함께 stock으로 되돌립니다.`)) return;
-                    t.busy = true; t.error = false;
-                    try {
-                        const res = await fetch('/api/gpu/tuning170', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action:'reset', gpu_uuid:gpu.uuid})});
-                        const data = await res.json(); if(!res.ok) throw new Error(data.detail || 'stock 리셋 실패');
-                        t.message = data.message || 'stock 리셋 완료';
-                        if (data.tune170_status) t.status = data.tune170_status;
-                        await this.fetchGpuTuning(); await this.fetchGpuTopology();
-                    } catch(e) { t.error = true; t.message = 'stock 리셋 실패: ' + e.message; } finally { t.busy = false; }
-                },
-                async fetchTune170(gpu, kind) {
-                    const t = gpu.t170;
-                    t.busy = true; t.error = false;
-                    try {
-                        const res = await fetch('/api/gpu/tuning170?gpu=' + encodeURIComponent(gpu.uuid) + '&kind=' + kind);
-                        const data = await res.json(); if(!res.ok) throw new Error(data.detail || kind + ' 조회 실패');
-                        if (kind === 'preflight') t.preflight = data; else t.status = data;
-                    } catch(e) { t.error = true; t.message = kind + ' 조회 실패: ' + e.message; } finally { t.busy = false; }
-                },
-                async snapshotTune170(gpu) {
-                    const t = gpu.t170;
-                    if (!confirm(`GPU ${gpu.index}의 현재 값을 stock revert baseline으로 기록할까요?\n\n카드가 stock 상태로 부팅한 직후(변경 전)에 한 번만 실행해야 정확한 baseline이 됩니다.`)) return;
-                    t.busy = true; t.error = false;
-                    try {
-                        const res = await fetch('/api/gpu/tuning170', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action:'snapshot', gpu_uuid:gpu.uuid})});
-                        const data = await res.json(); if(!res.ok) throw new Error(data.detail || 'snapshot 실패');
-                        t.message = data.message || 'stock baseline 기록 완료';
-                    } catch(e) { t.error = true; t.message = 'snapshot 실패: ' + e.message; } finally { t.busy = false; }
-                },
-                async recoverTune170(gpu) {
-                    const t = gpu.t170;
-                    if (!confirm(`GPU ${gpu.index}의 170tune recover를 실행할까요?\n\n카드가 wedge/응답 고사 상태일 때 stock으로 돌려놓는 복구 경로입니다. 정상 상태에서는 stock 리셋과 동일하게 동작합니다.`)) return;
-                    t.busy = true; t.error = false;
-                    try {
-                        const res = await fetch('/api/gpu/tuning170', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action:'recover', gpu_uuid:gpu.uuid})});
-                        const data = await res.json(); if(!res.ok) throw new Error(data.detail || 'recover 실패');
-                        t.message = data.message || 'recover 완료';
-                        if (data.tune170_status) t.status = data.tune170_status;
-                    } catch(e) { t.error = true; t.message = 'recover 실패: ' + e.message; } finally { t.busy = false; }
                 },
                 async fetchMotherboardFans() {
                     if (this.motherboardFanSaving) return;
@@ -2057,27 +1690,14 @@
                         const svc = d.services || {};
                         this.status = {
                             comfyui: !!(svc.comfyui && svc.comfyui.running),
-                            comfyui_gpu1: !!(svc.comfyui_gpu1 && svc.comfyui_gpu1.running),
                             llamacpp: !!(svc.llama && svc.llama.running),
                             vllm: !!(svc.vllm && svc.vllm.running),
                             telegram_bot: !!(svc.bot && svc.bot.running),
                             watcher: !!(svc.watcher && svc.watcher.running),
                             unsloth: !!(svc.unsloth && svc.unsloth.running),
-                            deepseek_harness: !!(svc.deepseek_harness && svc.deepseek_harness.running),
                             initialization: d.initialization || {ready:true, message:'초기화 완료'}
                         };
                         this.unslothAvailable = !!svc.unsloth?.available;
-                        this.deepseekHarnessAvailable = !!svc.deepseek_harness?.available;
-                        this.deepseekHarnessUrl = svc.deepseek_harness?.launch_url || '';
-                        this.deepseekHarnessInstallMessage = (svc.deepseek_harness?.installing || (svc.deepseek_harness?.running && !svc.deepseek_harness?.ready))
-                            ? (svc.deepseek_harness?.install_message || '자동 설치 중…')
-                            : (svc.deepseek_harness?.install_error ? `최근 설치 실패 · ${svc.deepseek_harness.install_error}` : '');
-                        this.comfyState = { main: !!(svc.comfyui && svc.comfyui.running), gpu1: !!(svc.comfyui_gpu1 && svc.comfyui_gpu1.running) };
-                        const comfyMeta = d.comfy_instances || {};
-                        for (const inst of this.comfyInstances) {
-                            const meta = comfyMeta[inst.key];
-                            if (meta && typeof meta.port === 'number') inst.port = meta.port;
-                        }
                         const runtimeSettings = d.settings || {};
                         this.isWindows = !!d.is_windows;
                         this.servicePorts = {
@@ -2085,98 +1705,31 @@
                             comfyui: Number(runtimeSettings.comfyui_port) || this.servicePorts.comfyui,
                             llama: Number(d.llama_port || runtimeSettings.llama_port) || this.servicePorts.llama,
                             vllm: Number(runtimeSettings.vllm_port) || this.servicePorts.vllm,
-                            unsloth: Number(runtimeSettings.unsloth_port) || this.servicePorts.unsloth,
-                            deepseekHarness: Number(svc.deepseek_harness?.port || runtimeSettings.deepseek_harness_port) || this.servicePorts.deepseekHarness
+                            unsloth: Number(runtimeSettings.unsloth_port) || this.servicePorts.unsloth
                         };
                     } catch (e) { }
                     this.loading.status = false;
                 },
 
-                comfyServiceName(instance) {
-                    return instance === 'gpu1' ? 'comfyui_gpu1' : 'comfyui';
-                },
-                openComfyArgs(instance = 'main') {
-                    const key = instance || 'main';
-                    if (!this.comfySettings[key]) this.comfySettings[key] = this.comfyDefaultSettings();
-                    this.comfyArgsModal.instance = key;
-                    this.comfyArgsModal.show = true;
-                    document.body.classList.add('modal-open');
-                },
-                closeComfyArgs() {
-                    this.comfyArgsModal.show = false;
-                    if (!this.logModal.show) document.body.classList.remove('modal-open');
-                },
-                comfyShortLabel(inst) {
-                    const part = String(inst.label || '').split('·')[1];
-                    return (part || inst.label || 'ComfyUI').trim();
-                },
-                comfyGpuTag(key) {
-                    const uuid = (this.comfySettings[key] || {}).gpu_device;
-                    return uuid ? `GPU ${this.gpuIndex(uuid)}` : 'All GPU';
-                },
-                comfyActiveArgCount(key) {
-                    const s = this.comfySettings[key] || {};
-                    let count = this.comfyOptionDefs.filter(option => !!s[option.key]).length;
-                    if (s.reserve_vram_enabled) count += 1;
-                    return count;
-                },
-                comfyArgsPreview(key) {
-                    const s = this.comfySettings[key] || {};
-                    const inst = this.comfyInstances.find(item => item.key === key) || {};
-                    const args = [];
-                    if (s.listen) args.push('--listen 0.0.0.0');
-                    if (s.preview_method_none) args.push('--preview-method none');
-                    if (s.cache_none) args.push('--cache-none');
-                    if (s.use_sage_attention) args.push('--use-sage-attention');
-                    if (s.disable_cuda_malloc) args.push('--disable-cuda-malloc');
-                    if (s.disable_pinned_memory) args.push('--disable-pinned-memory');
-                    if (s.reserve_vram_enabled) args.push(`--reserve-vram ${s.reserve_vram ?? 1.0}`);
-                    if (s.disable_async_offload) args.push('--disable-async-offload');
-                    if (s.disable_dynamic_vram) args.push('--disable-dynamic-vram');
-                    if (s.fast_disk) args.push('--fast-disk');
-                    if (s.fast_fp16_accumulation) args.push('--fast fp16_accumulation');
-                    if (String(s.custom_args || '').trim()) args.push(String(s.custom_args).trim());
-                    const prefix = s.gpu_device ? `CUDA_VISIBLE_DEVICES="GPU${this.gpuIndex(s.gpu_device)}" ` : '';
-                    return `${prefix}python main.py --port ${inst.port || '--'} \\\n  ${args.join(' \\\n  ')}`;
-                },
-                comfyDefaultSettings() {
-                    return {
-                        listen: true, use_sage_attention: true, disable_cuda_malloc: true,
-                        disable_pinned_memory: true, preview_method_none: false, cache_none: false,
-                        reserve_vram_enabled: true, reserve_vram: 1, disable_async_offload: false,
-                        disable_dynamic_vram: true, fast_disk: false, fast_fp16_accumulation: false,
-                        gpu_device: '', custom_args: ''
-                    };
-                },
                 async fetchComfySettings() {
-                    for (const inst of this.comfyInstances) {
-                        const key = inst.key;
-                        try {
-                            const res = await fetch(`/api/comfy/settings?instance=${key}`);
-                            const data = await res.json();
-                            if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
-                            this.comfySettings[key] = { ...this.comfyDefaultSettings(), ...(this.comfySettings[key] || {}), ...data };
-                            if (typeof data.port === 'number') inst.port = data.port;
-                        } catch (e) {
-                            if (!this.comfySettings[key]) this.comfySettings[key] = this.comfyDefaultSettings();
-                        }
-                    }
+                    try {
+                        const res = await fetch('/api/comfy/settings');
+                        const data = await res.json();
+                        this.comfySettings = { ...this.comfySettings, ...data };
+                    } catch (e) {}
                 },
 
-                async saveComfySettings(instance = 'main') {
-                    const key = instance || 'main';
+                async saveComfySettings() {
                     this.comfySettingsSaving = true;
                     try {
                         const res = await fetch('/api/comfy/settings', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ ...(this.comfySettings[key] || {}), instance: key })
+                            body: JSON.stringify(this.comfySettings)
                         });
                         const data = await res.json().catch(() => ({}));
                         if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
-                        this.comfySettings[key] = { ...this.comfyDefaultSettings(), ...(this.comfySettings[key] || {}), ...data };
-                        const target = this.comfyInstances.find(i => i.key === key);
-                        if (target && typeof data.port === 'number') target.port = data.port;
+                        this.comfySettings = { ...this.comfySettings, ...data };
                         return true;
                     } catch (e) {
                         alert('ComfyUI 옵션 저장 실패: ' + e.message);
@@ -2187,26 +1740,18 @@
                 },
 
                 async forceKill(server) {
-                    const serverNames = { 'bot': 'Telegram Bot', 'watcher': 'Local Watcher', 'comfyui': 'ComfyUI(메인)', 'comfyui_gpu1': 'ComfyUI(보조 GPU1)', 'llamacpp': 'Llama.cpp', 'unsloth': 'Unsloth Studio', 'deepseek_harness': 'DeepSeek Harness' };
+                    const serverNames = { 'bot': 'Telegram Bot', 'watcher': 'Local Watcher', 'comfyui': 'ComfyUI', 'llamacpp': 'Llama.cpp', 'unsloth': 'Unsloth Studio' };
                     const serverName = serverNames[server] || server;
                     
-                    const warning = server === 'deepseek_harness'
-                        ? 'WARNING: This will instantly terminate the agent process.\nRunning tasks and unsaved session work may be lost.'
-                        : 'WARNING: This will instantly terminate the process and dump VRAM.\nUnsaved data will be lost.';
-                    const confirmed = confirm(`[FORCE KILL] ${serverName}\n\n${warning}\n\nProceed?`);
+                    const confirmed = confirm(`[FORCE KILL] ${serverName}\n\nWARNING: This will instantly terminate the process and dump VRAM.\nUnsaved data will be lost.\n\nProceed?`);
                     if (!confirmed) return;
                     
                     try {
                         const apiServer = server === 'llamacpp' ? 'llama' : server;
-                        const headers = (server === 'comfyui' || server === 'comfyui_gpu1') ? {'X-ComfyUI-Stop-Confirm':'confirmed'} : {};
-                        const res = await fetch(`/api/force_kill/${apiServer}`, { method: 'POST', headers });
-                        const data = await res.json().catch(() => ({}));
-                        if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
-                        await this.fetchStatus();
-                        if (!data.ok && this.status[apiServer]?.running) {
-                            throw new Error('종료할 프로세스를 찾지 못했습니다.');
-                        }
-                    } catch(e) { alert("Kill request failed: " + e.message); }
+                        const headers = server === 'comfyui' ? {'X-ComfyUI-Stop-Confirm':'confirmed'} : {};
+                        await fetch(`/api/force_kill/${apiServer}`, { method: 'POST', headers });
+                        setTimeout(() => this.fetchStatus(), 1000);
+                    } catch(e) { alert("Kill request failed"); }
                 },
                 
                 async panicKill() {
@@ -2245,7 +1790,7 @@
                 },
 
                 openLogModal(server) {
-                    const titles = { 'bot': 'Telegram Bot', 'watcher': 'Local Watcher', 'comfyui': 'ComfyUI(메인)', 'comfyui_gpu1': 'ComfyUI(보조 GPU1)', 'llamacpp': 'Llama.cpp', 'unsloth': 'Unsloth Studio', 'deepseek_harness': 'DeepSeek Harness' };
+                    const titles = { 'bot': 'Telegram Bot', 'watcher': 'Local Watcher', 'comfyui': 'ComfyUI', 'llamacpp': 'Llama.cpp', 'unsloth': 'Unsloth Studio' };
                     this.logModal.server = server;
                     this.logModal.title = titles[server];
                     this.logModal.show = true;
@@ -2324,20 +1869,16 @@
                     catch(e) { alert("Terminal open failed"); }
                 },
 
-                async controlServer(server, action, instance = 'main') {
-                    const launchTab = (server === 'deepseek_harness' && action === 'start') ? window.open('about:blank', '_blank') : null;
-                    const instKey = instance || 'main';
-                    const instLabel = (this.comfyInstances.find(i => i.key === instKey) || {}).label || 'ComfyUI';
-                    if (server === 'comfyui' && action === 'stop' && !confirm(`${instLabel} 작업을 종료하시겠습니까? 진행 중인 생성 작업이 중단될 수 있습니다.`)) return;
+                async controlServer(server, action) {
+                    if (server === 'comfyui' && action === 'stop' && !confirm('ComfyUI 작업을 종료하시겠습니까? 진행 중인 생성 작업이 중단될 수 있습니다.')) return;
                     if (server === 'unsloth' && action === 'stop' && !confirm('Unsloth Studio를 종료하시겠습니까? 진행 중인 학습·추론 작업이 중단될 수 있습니다.')) return;
-                    if (server === 'deepseek_harness' && action === 'stop' && !confirm('DeepSeek Harness를 종료하시겠습니까? 실행 중인 에이전트 작업이 중단될 수 있습니다.')) return;
-                    if (server === 'comfyui' && action === 'start' && !(await this.saveComfySettings(instKey))) return;
+                    if (server === 'comfyui' && action === 'start' && !(await this.saveComfySettings())) return;
                     this.loading[server] = true;
                     try {
                         const fetchOptions = { method: 'POST' };
                         if (server === 'comfyui' && action === 'start') {
                             fetchOptions.headers = { 'Content-Type': 'application/json' };
-                            fetchOptions.body = JSON.stringify({ ...(this.comfySettings[instKey] || {}), instance: instKey });
+                            fetchOptions.body = JSON.stringify(this.comfySettings);
                         }
                         if (server === 'comfyui' && action === 'stop') {
                             fetchOptions.headers = { ...(fetchOptions.headers || {}), 'X-ComfyUI-Stop-Confirm': 'confirmed' };
@@ -2345,23 +1886,13 @@
                         if (server === 'unsloth' && action === 'stop') {
                             fetchOptions.headers = { ...(fetchOptions.headers || {}), 'X-Unsloth-Stop-Confirm': 'confirmed' };
                         }
-                        if (server === 'deepseek_harness' && action === 'stop') {
-                            fetchOptions.headers = { ...(fetchOptions.headers || {}), 'X-DeepSeek-Harness-Stop-Confirm': 'confirmed' };
-                        }
-                        // stop은 쿼리로 instance를, start는 body의 instance로 전달합니다.
-                        const pathServer = ({ bot: 'bot', watcher: 'watcher', comfyui: 'comfy', llamacpp: 'llama' }[server] || server);
-                        const query = (server === 'comfyui') ? `?instance=${encodeURIComponent(instKey)}` : '';
-                        const res = await fetch(`/api/${pathServer}/${action}${query}`, fetchOptions);
-                        const responseData = await res.json().catch(() => ({}));
-                        if (!res.ok) throw new Error(responseData.detail || `HTTP ${res.status}`);
-                        if (launchTab && responseData.launch_url) launchTab.location.replace(responseData.launch_url);
-                        else if (launchTab) launchTab.close();
+                        const res = await fetch(`/api/${({ bot: 'bot', watcher: 'watcher', comfyui: 'comfy', llamacpp: 'llama' }[server] || server)}/${action}`, fetchOptions);
+                        if (!res.ok) throw new Error(await res.text());
                         setTimeout(async () => {
                             await this.fetchStatus();
                             this.loading[server] = false;
                         }, 3000);
                     } catch (e) {
-                        if (launchTab) launchTab.close();
                         this.loading[server] = false;
                         alert("Request failed: " + e.message);
                     }
@@ -2495,35 +2026,7 @@
                         const res = await fetch('/api/llama/settings');
                         const data = await res.json();
                         this.modelRootInput = data.model_root || this.modelRootInput;
-                        // 수동 인자/tensor-read-lazy 는 서버 파일이 단일 정본이다(last_run, 프리셋보다 우선).
-                        this.config.customArgs = typeof data.custom_args === 'string' ? data.custom_args : '';
-                        this.config.tensorReadLazy = ['auto', 'on', 'off'].includes(data.tensor_read_lazy) ? data.tensor_read_lazy : 'auto';
                     } catch (e) {}
-                },
-
-                async saveLlamaArgs() {
-                    try {
-                        const res = await fetch('/api/llama/settings', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                custom_args: this.config.customArgs || '',
-                                tensor_read_lazy: this.config.tensorReadLazy || 'auto'
-                            })
-                        });
-                        if (!res.ok) {
-                            const err = await res.json().catch(() => null);
-                            throw new Error(err?.detail || await res.text());
-                        }
-                        const data = await res.json();
-                        this.config.customArgs = data.custom_args || '';
-                        this.config.tensorReadLazy = data.tensor_read_lazy || 'auto';
-                        this.llamaArgsSaved = true;
-                        setTimeout(() => { this.llamaArgsSaved = false; }, 2000);
-                    } catch (e) {
-                        alert('수동 인자 저장 실패: ' + e.message);
-                        await this.loadLlamaSettings();
-                    }
                 },
 
                 async saveModelRoot() {
@@ -2624,12 +2127,7 @@
                 
                 loadPreset() {
                     if (this.selectedPreset && this.presets[this.selectedPreset]) {
-                        // 수동 인자는 서버 저장값이 단일 정본이므로 프리셋에 상관없이 유지한다.
-                        const savedCustomArgs = this.config.customArgs;
-                        const savedTensorReadLazy = this.config.tensorReadLazy;
                         this.config = this.normalizeLlamaConfig(this.presets[this.selectedPreset]);
-                        this.config.customArgs = savedCustomArgs;
-                        this.config.tensorReadLazy = savedTensorReadLazy;
                     }
                 },
                 

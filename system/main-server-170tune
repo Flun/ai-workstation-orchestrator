@@ -1,0 +1,222 @@
+#!/usr/bin/env bash
+# main-server-170tune - root-owned validating wrapper for 170tune (CMP 170HX clock control).
+#
+# main_server (non-root) invokes this via `sudo -n` (see main-server-170tune.sudoers).
+# It enforces a strict command/argument whitelist, resolves UUID -> GPU index once,
+# and stores per-UUID profiles in /etc/main-server/170tune.d/GPU-<uuid>.conf so
+# 170tune-apply.service can re-apply them at boot.
+#
+# The two tuning methods share nvidia-smi's -lgc/-pl; whichever is applied last wins.
+# Every live apply below clears the *other* method's locks first, and METHOD in the
+# saved profile decides which method's boot re-apply runs (the nvidia-smi side,
+# main-server-gpu-control, skips cards whose METHOD=170tune profile is enabled).
+#
+# Commands:
+#   status <sel>                     170tune status (live offset / ceiling / memory clock)
+#   preflight <sel>                  170tune preflight (read-only checklist; rc!=0 on failure)
+#   snapshot-stock <sel>             record THIS card's stock values as its revert baseline
+#   recover <sel>                    put the card back, escalating honestly if it is wedged
+#   method <sel> <nvidia-smi|170tune> choose which method owns this card at boot
+#   set <sel> <profile> <offset> <clk> <pl> <ndiv>
+#       profile: stock|dense|match|balanced|perf|max|custom
+#       named profile -> 170tune apply <profile> (built-in offset/ceiling/PL table)
+#       custom        -> OC_OFFSET/OC_CLK/OC_PL (clk 0 = no ceiling, pl 0 = 300)
+#       ndiv: 0 or stock(64) = leave HBM as-is; otherwise live 170tune mclk-try <ndiv>
+#   reset <sel>                      stock SM point (offset 0, no ceiling, 250W) + best-effort HBM revert
+#   disable <sel>                    mark the saved profile disabled (running values untouched)
+#   apply-saved [sel|all]            re-apply enabled 170tune profiles (boot service)
+set -euo pipefail
+
+TUNE=/usr/local/bin/170tune
+CONFIG_DIR=/etc/main-server/170tune.d
+STOCK_NDIV=64
+PROFILES="stock dense match balanced perf max custom"
+
+die() { echo "$*" >&2; exit 2; }
+is_uint() { [[ "$1" =~ ^[0-9]+$ ]]; }
+trim() { local v=$1; v=${v#"${v%%[![:space:]]*}"}; v=${v%"${v##*[![:space:]]}"}; printf '%s' "$v"; }
+
+[ "$(id -u)" -eq 0 ] || die "root 전용 헬퍼입니다"
+[ -x "$TUNE" ] || die "170tune가 설치되어 있지 않습니다 (git clone https://github.com/cachenetics/170tune && sudo ./install.sh)"
+
+IDX=""; UUID=""; DEVID=""; CONFIG_FILE=""
+
+resolve_gpu() {
+  local selector=$1 line
+  line=$(nvidia-smi -i "$selector" --query-gpu=index,uuid,pci.device_id --format=csv,noheader 2>/dev/null) \
+    || die "GPU를 찾을 수 없습니다: $selector"
+  IFS=, read -r IDX UUID DEVID <<<"$line"
+  IDX=$(trim "$IDX"); UUID=$(trim "$UUID"); DEVID=$(trim "$DEVID")
+  [[ -n "$IDX" && "$UUID" =~ ^GPU-[A-Za-z0-9-]+$ ]] || die "GPU 정보를 읽을 수 없습니다: $selector"
+  [[ "${DEVID,,}" == *20c2* || "${DEVID,,}" == *2082* ]] || die "GPU $UUID는 CMP 170HX가 아닙니다 (device id $DEVID)"
+  CONFIG_FILE="$CONFIG_DIR/$UUID.conf"
+}
+
+run170() { "$TUNE" -i "$IDX" "$@"; }
+
+read_conf() {
+  PROFILE=""; OFFSET=0; CLK=0; PL=0; NDIV=$STOCK_NDIV; TUNE_ENABLED=1; METHOD="170tune"
+  [ -r "$CONFIG_FILE" ] || return 0
+  # shellcheck disable=SC1090
+  source "$CONFIG_FILE"
+}
+
+write_conf() {
+  install -d -o root -g root -m 0755 "$CONFIG_DIR"
+  umask 022
+  local tmp="$CONFIG_FILE.tmp"
+  printf 'GPU_UUID=%q\nMETHOD=%q\nTUNE_ENABLED=%q\nPROFILE=%q\nOFFSET=%q\nCLK=%q\nPL=%q\nNDIV=%q\n' \
+    "$UUID" "$METHOD" "$TUNE_ENABLED" "$PROFILE" "$OFFSET" "$CLK" "$PL" "$NDIV" >"$tmp"
+  chown root:root "$tmp"; chmod 0644 "$tmp"; mv "$tmp" "$CONFIG_FILE"
+}
+
+clear_smi_locks() {
+  # -lgc is shared with the nvidia-smi method. Release its lock (idle min stays 0/auto)
+  # so the live state always describes exactly the method applied last.
+  nvidia-smi -i "$IDX" -rgc >/dev/null 2>&1 || true
+}
+
+apply_sm() { # apply_sm <profile> <offset> <clk> <pl>
+  local profile=$1 offset=$2 clk=$3 pl=$4
+  clear_smi_locks
+  if [ "$profile" = "custom" ]; then
+    local oc_pl="$pl"
+    [ "$oc_pl" = "0" ] && oc_pl=300
+    local oc_clk="$clk"
+    if [ "$oc_clk" = "0" ]; then
+      # 170hx-oc's custom mode refuses an empty ceiling (its guard exists to
+      # reject a bare `apply custom` with no arguments). Expand "no ceiling"
+      # to the card's hardware max — the driver's own software cap still
+      # binds, so this is functionally "unlocked".
+      local hwmax
+      hwmax=$(nvidia-smi -i "$IDX" --query-gpu=clocks.max.graphics --format=csv,noheader,nounits 2>/dev/null | tr -d ' ')
+      [ -n "$hwmax" ] || die "custom(no ceiling): 하드웨어 최대 클럭을 읽을 수 없습니다"
+      oc_clk="$hwmax"
+    fi
+    OC_OFFSET="$offset" OC_CLK="$oc_clk" OC_PL="$oc_pl" run170 apply custom
+  else
+    run170 apply "$profile"
+  fi
+}
+
+apply_ndiv() { # apply_ndiv <ndiv>
+  local ndiv=$1
+  [ "$ndiv" = "0" ] && return 0
+  [ "$ndiv" = "$STOCK_NDIV" ] && return 0
+  run170 mclk-try "$ndiv"
+}
+
+validate_set() { # $1 profile $2 offset $3 clk $4 pl $5 ndiv
+  local profile=$1
+  case " $PROFILES " in *" $profile "*) ;; *) die "지원하지 않는 프로파일: $profile (stock dense match balanced perf max custom)" ;; esac
+  is_uint "$2" && is_uint "$3" && is_uint "$4" && is_uint "$5" || die "offset/clk/pl/ndiv는 0 이상의 정수여야 합니다"
+  [ "$2" -le 450 ] || die "SM offset +$2는 거부됩니다 (+450 초과가 이 카드를 하드크래시킴)"
+  [ "$3" -le 5000 ] || die "클럭 상한 $3 MHz는 허용 범위를 벗어납니다"
+  [ "$5" -le 80 ] || die "NDIV $5는 허용 범위를 벗어납니다 (stock 64, 검증된 상한 ~76-77)"
+  PROFILE=$profile; OFFSET=$2; CLK=$3; PL=$4
+  [ "$5" -eq 0 ] && NDIV=$STOCK_NDIV || NDIV=$5
+}
+
+cmd_set() {
+  local sel=$1
+  resolve_gpu "$sel"; validate_set "${2:?profile}" "${3:?offset}" "${4:?clk}" "${5:?pl}" "${6:?ndiv}"
+  TUNE_ENABLED=1; METHOD="170tune"; write_conf
+  apply_sm "$PROFILE" "$OFFSET" "$CLK" "$PL"
+  apply_ndiv "$NDIV" || echo "170tune: HBM NDIV $NDIV 적용 실패 (FBPA unlock이 이 카드를 열지 않았거나 이미 stock)" >&2
+  local clk_disp="$CLK"
+  [ "$PROFILE" = "custom" ] && [ "$CLK" = "0" ] && clk_disp="none(hardware max)"
+  echo "GPU $IDX ($UUID) 170tune 적용: profile=$PROFILE offset=+$OFFSET clk_max=$clk_disp pl=${PL:-default} ndiv=$NDIV"
+}
+
+cmd_reset() {
+  local sel=$1
+  resolve_gpu "$sel"; read_conf
+  local ndiv_prev=$NDIV
+  TUNE_ENABLED=1; METHOD="170tune"; PROFILE="stock"; OFFSET=0; CLK=0; PL=250
+  NDIV=$STOCK_NDIV; write_conf
+  clear_smi_locks
+  run170 reset
+  if [ "$ndiv_prev" != "$STOCK_NDIV" ] && [ "$ndiv_prev" != "0" ]; then
+    run170 mclk-try "$STOCK_NDIV" || echo "170tune: HBM NDIV stock($STOCK_NDIV) 리셋 실패/스킵 (FBPA가 열리지 않았거나 이미 stock)" >&2
+  fi
+  echo "GPU $IDX ($UUID) 170tune stock 리셋: offset=+0 클럭 잠금 해제 PL=250W"
+}
+
+cmd_disable() {
+  local sel=$1
+  resolve_gpu "$sel"; read_conf; TUNE_ENABLED=0; write_conf
+  echo "GPU $IDX ($UUID) 170tune 저장 설정 비활성화 (현재 실행값은 변경하지 않음)"
+}
+
+cmd_method() {
+  local sel=$1 m=$2
+  case "$m" in nvidia-smi|170tune) ;; *) die "method는 nvidia-smi 또는 170tune이어야 합니다" ;; esac
+  resolve_gpu "$sel"; read_conf; METHOD=$m
+  # Flipping to nvidia-smi disables the 170tune boot re-apply (its profile stays
+  # saved so flipping back restores it); flipping to 170tune re-arms it only if
+  # a profile is actually saved.
+  if [ "$m" = "nvidia-smi" ]; then TUNE_ENABLED=0; fi
+  if [ "$m" = "170tune" ] && [ -n "$PROFILE" ]; then TUNE_ENABLED=1; fi
+  write_conf
+  echo "GPU $IDX ($UUID) 부팅 방식: $m"
+}
+
+cmd_apply_saved_one() { # <uuid> ; gpu must be present and enabled
+  local uuid=$1 line
+  line=$(nvidia-smi --query-gpu=index,uuid,pci.device_id --format=csv,noheader 2>/dev/null) || return 0
+  local idx devid found=0
+  while IFS=, read -r idx uuid2 devid; do
+    idx=$(trim "$idx"); uuid2=$(trim "$uuid2"); devid=$(trim "$devid")
+    if [ "$uuid2" = "$uuid" ]; then
+      found=1
+      [[ "${devid,,}" == *20c2* || "${devid,,}" == *2082* ]] || return 0
+      IDX=$idx; UUID=$uuid2; CONFIG_FILE="$CONFIG_DIR/$uuid.conf"
+      break
+    fi
+  done <<<"$line"
+  [ "$found" = 1 ] || { echo "GPU 미존재 스킵: $uuid"; return 0; }
+  read_conf
+  [ "$METHOD" = "170tune" ] || return 0
+  [ "$TUNE_ENABLED" = 1 ] || { echo "GPU $IDX ($UUID) 170tune 비활성화 — 스킵"; return 0; }
+  if [ -z "$PROFILE" ]; then echo "GPU $IDX ($UUID) 저장 170tune 프로파일 없음 — 스킵"; return 0; fi
+  apply_sm "$PROFILE" "$OFFSET" "$CLK" "$PL" || echo "GPU $IDX ($UUID) 170tune 재적용 실패" >&2
+  apply_ndiv "$NDIV" || true
+  local clk_disp="$CLK"
+  [ "$PROFILE" = "custom" ] && [ "$CLK" = "0" ] && clk_disp="none(hardware max)"
+  echo "GPU $IDX ($UUID) 170tune 부팅 재적용: profile=$PROFILE offset=+$OFFSET clk_max=$clk_disp pl=${PL:-default} ndiv=$NDIV"
+}
+
+cmd_apply_saved() {
+  local sel=${1:-all}
+  if [ "$sel" != "all" ]; then
+    resolve_gpu "$sel"; read_conf
+    [ "$METHOD" = "170tune" ] && [ "$TUNE_ENABLED" = 1 ] || { echo "170tune 재적용 대상이 아닙니다: $UUID"; return 0; }
+    cmd_apply_saved_one "$UUID"
+    return 0
+  fi
+  local file uuid
+  [ -d "$CONFIG_DIR" ] || { echo "저장된 170tune 프로파일 없음 — 건너뜀"; return 0; }
+  local found=0
+  for file in "$CONFIG_DIR"/GPU-*.conf; do
+    [ -f "$file" ] || continue
+    uuid=$(awk -F= '$1 == "GPU_UUID" { print $2 }' "$file" | tail -n1)
+    [[ "$uuid" =~ ^GPU-[A-Za-z0-9-]+$ ]] || continue
+    found=1
+    cmd_apply_saved_one "$uuid" || true
+  done
+  [ "$found" = 1 ] || echo "저장된 170tune 프로파일 없음 — 건너뜀"
+  return 0
+}
+
+case "${1:-}" in
+  status)         [[ $# -eq 2 ]] || die "사용법: $0 status <gpu-uuid|idx>"; resolve_gpu "$2"; run170 status ;;
+  preflight)      [[ $# -eq 2 ]] || die "사용법: $0 preflight <gpu-uuid|idx>"; resolve_gpu "$2"; set +e; run170 preflight; rc=$?; set -e; exit $rc ;;
+  snapshot-stock) [[ $# -eq 2 ]] || die "사용법: $0 snapshot-stock <gpu-uuid|idx>"; resolve_gpu "$2"; run170 snapshot-stock ;;
+  recover)        [[ $# -eq 2 ]] || die "사용법: $0 recover <gpu-uuid|idx>"; resolve_gpu "$2"; run170 recover ;;
+  method)         [[ $# -eq 3 ]] || die "사용법: $0 method <gpu-uuid|idx> <nvidia-smi|170tune>"; cmd_method "$2" "$3" ;;
+  set)            [[ $# -eq 7 ]] || die "사용법: $0 set <gpu-uuid|idx> <profile> <offset> <clk> <pl> <ndiv>"; cmd_set "$2" "$3" "$4" "$5" "$6" "$7" ;;
+  reset)          [[ $# -eq 2 ]] || die "사용법: $0 reset <gpu-uuid|idx>"; cmd_reset "$2" ;;
+  disable)        [[ $# -eq 2 ]] || die "사용법: $0 disable <gpu-uuid|idx>"; cmd_disable "$2" ;;
+  apply-saved)    [[ $# -le 2 ]] || die "사용법: $0 apply-saved [gpu-uuid|idx|all]"; cmd_apply_saved "${2:-all}" ;;
+  *)              die "지원하지 않는 명령: ${1:-<없음>}" ;;
+esac

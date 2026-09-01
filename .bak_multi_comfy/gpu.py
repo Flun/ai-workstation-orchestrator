@@ -11,7 +11,6 @@ IS_WINDOWS = os.name == "nt"
 
 GPU_SERVICE_LABELS = {
     "comfyui": {"label": "ComfyUI", "color": "amber"},
-    "comfyui_gpu1": {"label": "ComfyUI(보조 GPU1)", "color": "orange"},
     "llama": {"label": "llama.cpp", "color": "sky"},
     "bot": {"label": "봇", "color": "emerald"},
     "watcher": {"label": "와처", "color": "violet"},
@@ -325,9 +324,7 @@ def _classify_process(pid, process_name=""):
             if "llama-server" in name or "llama-server" in command:
                 return "llama"
             if "main.py" in command and "comfyui" in command:
-                # 매니저는 보조 인스턴스에 --user-directory <comfy>/user-gpu1 를
-                # 넘기므로 포트 값에 의존하지 않고도 안전하게 구분됩니다.
-                return "comfyui_gpu1" if re.search(r"user-gpu1\b", command) else "comfyui"
+                return "comfyui"
             if "telegram" in command or "comfy_bridge" in command:
                 return "bot"
             if "watcher" in command:

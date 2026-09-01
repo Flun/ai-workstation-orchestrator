@@ -1,0 +1,13 @@
+[Unit]
+Description=CMP 170HX 170tune boot re-apply (SM offset / clock ceiling / power / HBM NDIV)
+After=graphical.target multi-user.target gpu-tune.service nvidia-persistenced.service
+Before=170tune-bootcheck.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/main-server-170tune apply-saved
+TimeoutStartSec=120
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
