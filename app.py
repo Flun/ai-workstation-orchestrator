@@ -1506,6 +1506,20 @@ _VENDORED_FILES = {
 }
 
 
+@app.get("/float-panels.js")
+def float_panels_js():
+    """서브페이지(/media 등) 공용 플로팅 터미널+메모 위젯.
+    no-store: HTML과 동일하게 갱신을 새로고침 즉시 받는다."""
+    path = os.path.join(BASE_DIR, "float-panels.js")
+    if not os.path.isfile(path):
+        raise HTTPException(500, "float-panels.js missing")
+    return FileResponse(
+        path,
+        media_type="application/javascript; charset=utf-8",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @app.get("/vendor/{name}")
 def vendored(name: str):
     meta = _VENDORED_FILES.get(name)

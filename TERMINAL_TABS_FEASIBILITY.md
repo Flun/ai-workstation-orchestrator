@@ -271,3 +271,20 @@
    `preventDefault+stopPropagation`하고 뷰어를 열기. 아래 휠(정상 스크롤,
    마우스 리포트)은 그대로 xterm에 전달 — 마우스 기능(vim 등)은 유지.
    캡처/버블 단계 탐침(모든 경로 요소에 probe)으로 절단 지점을 확인.
+
+### 7.9 7라운드 — 서브페이지 공용 플로팅 패널 (float-panels.js)
+/media, /model-hub, /vast, /infrastructure, /dataset 등 서브페이지(각자
+독립 HTML+Vue)에는 플로팅 터미널/메모 버튼이 없던 문제. index.html의
+패널 코드를 5개 페이지에 복제하지 않고 **자립형 위젯 파일 하나로** 해결:
+- `/float-panels.js`(no-store 서빙): 페이지의 window.Vue로 별도 마운트되는
+  Vue 앱. 플로팅 버튼 스택 + 컴팩트 터미널 패널 + 메모 패널.
+- 터미널은 메인과 **동일 서버 세션**(/ws/terminal, /api/terminal/sessions)을
+  쓰기 때문에 페이지 전환/기기 간 연속. 열기 시 세션 리콘시일, 탭 추가/닫기,
+  4~6라운드 검증된 동작(디퍼 attach, 디바운스 재접속, CRLF 뷰어, .capture
+  휠, ESC 순서, 자동 재연결)을 그대로 반영.
+- xterm 벤더 스크립트는 window.Terminal 없으면 동적 주입. 인-DOM 템플릿이
+  아니라 template 문자열 사용(in-DOM의 <template v-for> 함정 회피).
+- 각 페이지 </body> 앞에 `<div id="float-panels-root"></div>` + 스크립트 한 줄.
+- index.html(메인)은 자체 구현 유지 — 위젯과 코드 중복이 생기지만, 메인
+  페이지(와이드/헤더/로그 탭 포함)는 기능 범위가 다르고 검증이 끝난 상태라
+  리팩터링 리스크를 피하는 선택.
