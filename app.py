@@ -3076,21 +3076,27 @@ def terminal_main(lines: int = 400):
     return {"lines": body, "source": source, "count": len(body)}
 
 
-# ---------- 웹 터미널 (tmux 기반, root 셸, 기기 간 연속) ----------
+# ---------- 웹 터미널 (tmux 기반, 일반 사용자 셸, 기기 간 연속) ----------
 #
-# 브라우저(xterm.js) <-> WebSocket <-> pty <-> `sudo tmux attach`.
-# 세션 상태(cwd/실행 중 작업/스크롤백)는 tmux 서버(루트)에 있으므로 어떤
-# 디바이스로 접속하든 같은 세션에 붙는다. 탭을 없애면 kill-session으로
-# 세션과 그 안의 작업이 함께 종료된다.
+# 브라우저(xterm.js) <-> WebSocket <-> pty <-> `tmux attach`.
+# 세션은 서비스 사용자(flux) 명의의 tmux 서버(/tmp/tmux-1000/default)에서
+# 돌고, 셸도 flux로 시작한다 — pipx/venv 등 사용자 공간 도구가 바로 쓰고,
+# root 작업은 셸 안에서 `sudo`(전수 NOPASSWD)로. 세션 상태(cwd/실행 중
+# 작업/스크롤백)은 tmux 서버에 있으므로 어떤 디바이스로 접속하든 같은
+# 세션에 붙는다. 탭을 없애면 kill-session으로 세션과 그 안의 작업이 함께
+# 종료된다.
 
 TERM_SESSION_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$")
 TERM_HISTORY_LIMIT = 20000
 
 
-def _sudo_tmux(*args, timeout=20):
-    """tmux를 루트로 실행. flux 사용자는 전수 NOPASSWD sudo를 가진다."""
+def _tmux(*args, timeout=20):
+    """tmux를 서비스 사용자(flux)로 실행 — flux 명의 tmux 서버
+    (/tmp/tmux-1000/default)를 쓴다. 앱 프로세스 자체가 flux(user
+    systemd 서비스)이므로 sudo 불필요. 루트 작업은 웹 셸 안에서
+    `sudo`로(전수 NOPASSWD)."""
     proc = subprocess.run(
-        ["sudo", "-n", "tmux", *args],
+        ["tmux", *args],
         capture_output=True, text=True, timeout=timeout,
     )
     return proc.returncode, (proc.stdout or "").strip(), (proc.stderr or "").strip()
@@ -3110,7 +3116,7 @@ def _tmux_capture(name: str, lines: int) -> str:
     정규화해야 줄이 0열부터 시작한다(LF만으로는 커서가 0열로 안 돌아감).
     capture-pane은 pane만 잡으므로 tmux 상태줄은 포함되지 않는다."""
     proc = subprocess.run(
-        ["sudo", "-n", "tmux", "capture-pane", "-p", "-e",
+        ["tmux", "capture-pane", "-p", "-e",
          "-S", f"-{lines}", "-t", name],
         capture_output=True, timeout=30,
     )
@@ -3129,7 +3135,7 @@ def _web_terminal_available() -> bool:
 def terminal_sessions():
     if not _web_terminal_available():
         return {"available": False, "sessions": []}
-    rc, out, _err = _sudo_tmux("list-sessions", "-F", "#{session_name}\t#{session_attached}")
+    rc, out, _err = _tmux("list-sessions", "-F", "#{session_name}\t#{session_attached}")
     if rc != 0:
         return {"available": True, "sessions": []}
     sessions = []
@@ -3144,13 +3150,13 @@ def terminal_session_create():
     if not _web_terminal_available():
         raise HTTPException(501, "웹 터미널은 Linux에서만 지원합니다")
     name = f"term-{int(time.time()) % 100000000:08d}"
-    rc, _out, _err = _sudo_tmux("has-session", "-t", name)
+    rc, _out, _err = _tmux("has-session", "-t", name)
     if rc == 0:  # 같은 초에 재요청이 들어온 경우 접미사 추가
         name += f"-{int(time.time()) % 100000:05d}"
-    rc, _out, err = _sudo_tmux("new-session", "-d", "-s", name, "-c", "~", "-x", "200", "-y", "50")
+    rc, _out, err = _tmux("new-session", "-d", "-s", name, "-c", "~", "-x", "200", "-y", "50")
     if rc != 0:
         raise HTTPException(500, f"tmux 세션 생성 실패: {err}")
-    _sudo_tmux("set-option", "-t", name, "history-limit", str(TERM_HISTORY_LIMIT))
+    _tmux("set-option", "-t", name, "history-limit", str(TERM_HISTORY_LIMIT))
     return {"name": name}
 
 
@@ -3160,7 +3166,7 @@ def terminal_session_kill(name: str):
         raise HTTPException(400, "잘못된 세션 이름")
     if not _web_terminal_available():
         raise HTTPException(501, "웹 터미널은 Linux에서만 지원합니다")
-    rc, _out, _err = _sudo_tmux("kill-session", "-t", name)
+    rc, _out, _err = _tmux("kill-session", "-t", name)
     return {"ok": rc == 0}
 
 
@@ -3174,12 +3180,12 @@ async def terminal_websocket(ws: WebSocket, name: str, cols: int = 0, rows: int 
         return
     await ws.accept()
 
-    rc, _out, _err = _sudo_tmux("has-session", "-t", name)
+    rc, _out, _err = _tmux("has-session", "-t", name)
     if rc != 0:
         await ws.send_text(json.dumps({"type": "err", "message": f"세션 '{name}' 이 없습니다(종료되었거나 서버가 재부팅됨)"}))
         await ws.close(code=1000)
         return
-    _sudo_tmux("set-option", "-t", name, "history-limit", str(TERM_HISTORY_LIMIT))
+    _tmux("set-option", "-t", name, "history-limit", str(TERM_HISTORY_LIMIT))
 
     loop = asyncio.get_running_loop()
     master, slave = pty.openpty()
@@ -3202,7 +3208,7 @@ async def terminal_websocket(ws: WebSocket, name: str, cols: int = 0, rows: int 
     attach_env = dict(os.environ)
     attach_env["TERM"] = "xterm-256color"
     proc = subprocess.Popen(
-        ["sudo", "-n", "tmux", "attach-session", "-t", name],
+        ["tmux", "attach-session", "-t", name],
         stdin=slave, stdout=slave, stderr=slave, close_fds=True, env=attach_env,
     )
     os.close(slave)

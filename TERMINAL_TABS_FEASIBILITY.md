@@ -253,3 +253,21 @@
    크기 _lastCols/Rows 폴백), ② attach 후 크기가 실제로 바뀌면(창 드래그,
    와이드/컴팩트 전환) resize 메시지를 보내지 말고 **300ms 디바운스 후 새
    크기로 재접속** — attach 시 tmux가 전체 화면을 다시 그려 항상 정상화.
+
+### 7.8 6라운드 — 기본 사용자 root→flux, xterm 마우스-모드 휠 삼켜짐
+1. **기본 사용자 전환**: web 터미널 세션이 `sudo -n tmux`(root)로 돌다가
+   서비스 사용자(flux) 자신의 tmux 서버(`/tmp/tmux-1000/default`)로 전환.
+   앱 프로세스가 이미 flux(user systemd)이므로 sudo 자체가 불필요해졌고,
+   pipx/venv 등 사용자 공간 도구(`hf` 등)가 PATH로 바로 잡혀
+   "알 수 없는 명령어"가 원천 해소. root 작업은 셸 안에서 `sudo`로
+   (flux는 전수 NOPASSWD). 기존 root tmux 상의 web 세션은 소멸(스크래치).
+2. **마우스 모드 + 휠 = 뷰어 사망(재현)**: flux의 `~/.tmux.conf`에
+   `set -g mouse on` → tmux가 attach 시 SGR 마우스 모드(wheel 비트 포함)
+   설정 → xterm이 **`.xterm` 루트에 wheel 리스너를 달고 무조건
+   `stopPropagation`(cancel(e,true))** — custom wheel handler 거부(veto)
+   체크도 없이. 그래서 버블 단계의 `.term-host @wheel`이 절대 이벤트를 못 받음
+   (root tmux는 mouse off라 4~5라운드 테스트가 통과했던 이유).
+   → **`.term-host` 리스너를 `@wheel.capture`(하강 경로)로 변경**, 위로 휠만
+   `preventDefault+stopPropagation`하고 뷰어를 열기. 아래 휠(정상 스크롤,
+   마우스 리포트)은 그대로 xterm에 전달 — 마우스 기능(vim 등)은 유지.
+   캡처/버블 단계 탐침(모든 경로 요소에 probe)으로 절단 지점을 확인.
