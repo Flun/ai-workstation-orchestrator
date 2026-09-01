@@ -164,3 +164,74 @@
 
 4단계 합쳐도 기존 코드의 아키텍처(CDN 프론트 + FastAPI + user systemd)를
 벗어나지 않고, 추가 데몬/포트/의존성이 모두 0이다. → **추천: Phase 1 + 2(단계 1~3) 진행.**
+
+## 7. 구현 노트 — 웹 터미널 탭 (3~4라운드, 2026-09-01)
+
+### 7.1 tmux redraw 모델 → 클라이언트 스크롤백은 절대 안 찬다 (핵심)
+- tmux 클라이언트 프로토콜은 **화면 차이만** 보내므로(`/x1b[K`, insert-line,
+  명시적 커서 이동), 브라우저 xterm의 스크롤백에는 히스토리가 쌓이지 않는다.
+  `cat`/로그가 화면을 밀어도 xterm `buffer.active.length`는 항상 == rows,
+  `viewportY`는 0에 고정. 히스토리는 **서버 쪽**(tmux, history-limit)에만 있다.
+- **스크롤백 뷰어**(4라운드): 위로 스크롤 → 서버 `tmux capture-pane -p -e
+  -S -N -E -2` (WS `{"type":"history","lines":20000}`) → 읽기전용 xterm
+  오버레이에 SGR 색상 그대로 렌더. 여기서 드래그/선택으로 복사 가능.
+  뷰어는 자체 scrollback 20000이라 더 오래된 것까지 내부 스크롤로 볼 수 있고,
+  화면 끝에서 아래로 스크롤(또는 ESC, 또는 "현재 터미널로 ↓" 버튼)로 복귀.
+  `-E -2`는 마지막 2줄(라이브 프롬프트 영역)을 라이브 화면에 남긴다.
+- 모바일(휠 없음)은 헤더의 스크롤백 버튼(역시 역사 시계 아이콘)으로 열 수 있다.
+
+### 7.2 xterm 휠 → 화살표 키 변환 (사용자 보고 버그의 정체)
+- xterm.js 5.5.0: 스크롤백이 비어 있으면(`buffer.hasScrollback`==false) 휠을
+  `getLinesScrolled()`로 변환해 **UP/DOWN 화살표 키를 앱에 전송**한다
+  (옛 xterm의 스크롤=키보드로 내보내기 관행). tmux 환경에서는 스크롤백이 항상
+  비어 있으므로, 위로 스크롤 = UP 화살표 = bash readline 히스토리 내비게이션
+  → "이전 명령이 입력줄에 나타남" + 로그 선택 복사 불가.
+- 대응: `attachCustomWheelEventHandler`가 **false를 반환하면 xterm 내장 로직
+  전체가 스킵**되고 이벤트는 버블링(= veto-only API, true 반환은 "스킵"이
+  아님에 주의). 현재: 위로 스크롤(false 반환)→ 버블 → `.term-host`의
+  `@wheel`이 preventDefault + 뷰어 오픈. 아래 스크롤은 내장 통과(바닥에서
+  getLinesScrolled=0이라 무해).
+
+### 7.3 init 버스트 2중 발송 버그 (4라운드 발견, 수정됨)
+- `\x1b=` 필터를 추가하던 중 else 분기에서 `head = data` (별칭) 후
+  `data = head + data` → **4KB 윈도우 안의 모든 read가 2배로 복제되어
+  발송**되는 버그를 만든 적 있다. 결과: 클라이언트가 첫 버스트(\x1b[?1049h
+  \x1b[22;0;0t \x1b[?1h \x1b= \x1b[H \x1b[2J ...)를 2회 수신 +
+  \x1b=가 필터 후에도 1회 생존(복제본이 원본 객체를 가리켜 필터 전 바이트였기
+  때문). pty의 os.read 로그(188/523/70/523)와 클라이언트 수신(1420) 불일치로
+  추적. 수정: else 분기에서 `data = b""`로 재할당.
+- 현재 남아있는 필터의 역할: attach 초기 4KB에서 `\x1b=`(DECKPAM)만 제거.
+  tmux는 세션 크기 ≠ 클라이언트 크기면 resize 때문에 **init 버스트를 2회**
+  보내므로, 그중 application-keypad 모드 설정을 걷어내는 것. read 경계에서
+  ESC와 '='가 갈라질 수 있어 1바이트 캐리. 버스트 이후의 mode 변화(앱이
+  스스로 설정/해제)는 그대로 통과. (참고: xterm.js 5.5.0은 DECKPAM을 키
+  매핑에 쓰지 않음 — 8개 참조는 저장/셋팅만 — 실제 영향은 미미하지만
+  정상화하는 것은 무해.)
+
+### 7.4 xterm 키 매핑 관련 오해 정리 (소스 검증, vendor/xterm.js)
+- `evaluateKeyboardEvent(e, applicationCursorKeys, isMac, macOptionIsMeta)` —
+  **applicationKeypad 인자가 아예 없음**. 본체 알파 키는 switch default로
+  `o.key = e.key` (1자 그대로 전달). `ESC O S` 같은 keypad 이스케이프는 F1-F4
+  (case 112-115)와 커서 키(37-40, DECCKM 시)뿐.
+- **테스트 함정**: CDP `Input.dispatchKeyEvent`에 keyCode를 안 주면
+  (또는 charCode를 주면) Linux Chrome은 `keyCode` = **문자 코드**(s→115)
+  로 보고, 115는 F4 case에 걸려 `ESC O S`로 변환됐다 → 'seq 1 120'이
+  'e 1 120'으로 깨지는 **테스트 아티팩트**였다(실사용 키보드는 VK 코드
+  83을 써서 해당 없음). CDP 키 입력 시 `windowsVirtualKeyCode`는
+  대문자 charCode(=VK 코드)로.
+
+### 7.5 alternate screen
+- tmux attach 시마다 `\x1b[?1049h` → 라이브 콘텐츠는 xterm
+  `buffer.alternate` (buffer.active === alternate). 버퍼 검증 코드는
+  alternate를 스캔해야 하고, **마지막 줄은 tmux 상태줄**(프롬프트는 0줄
+  부근). "마지막 비어있지 않은 줄" 스캔은 상태줄에 걸린다 — 특징 문자열
+  마커 스캔 사용.
+
+### 7.6 기타 동작 검증
+- Ctrl+C: 브라우저 → WS [3] → pty → tmux → pane bash, 전 구간 검증
+  (trap INT 발화, sleep 30 킬, ^C 화면 출력). 2개 클라이언트 검증기
+  (attach/clear)는 크기 flap/재그림 때문에 결과 해석에 주의.
+- WS 단절 시 자동 재연결(패널 열려 있으면 2초 간격, 재연결 시 tmux가 전체
+  화면을 다시 그려 어떤 기기에서도 현재 상태 복원).
+- resize는 attach 전에 `?cols=&rows=`로 pty를 최종 크기로 만들어
+  (attach 후 resize면 tmux가 화면을 지움), 이후 크기 변화는 재연결로.

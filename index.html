@@ -1303,6 +1303,9 @@
                             <span class="w-1.5 h-1.5 rounded-full" :class="activeTermTab.connected ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'"></span>
                             {{ activeTermTab.connected ? '연결됨' : '재연결 중...' }}
                         </span>
+                        <button v-if="activeTermTab && activeTermTab.kind === 'term'" @click="openHistoryViewer()" class="p-1 text-zinc-500 hover:text-zinc-200 transition" title="스크롤백 보기 — 현재 화면 위로 스크롤해도 되는 전체 히스토리(서버 기록)" aria-label="스크롤백 보기">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3v5h5M12 7v5l3 3"></path></svg>
+                        </button>
                         <button @click="toggleTerminalWide" class="p-1 text-zinc-500 hover:text-zinc-200 transition" :title="terminal.wide ? '컴팩트로 축소' : '넓게 확대'" :aria-label="terminal.wide ? '컴팩트로 축소' : '넓게 확대'">
                             <svg v-if="terminal.wide" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 9V4.5M9 9H4.5M9 9L4 4m11 5V4.5M15 9h4.5M15 9l5-5"></path></svg>
                             <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.5 9H9m-4.5 0L9 4.5M19.5 9H15m4.5 0L15 4.5M4.5 15H9m-4.5 0l4.5 4.5M19.5 15H15m4.5 0l-4.5 4.5"></path></svg>
@@ -1347,7 +1350,20 @@
                     <!-- 인-DOM 템플릿에서는 <template>가 HTML template 요소를 만나면
                          content 조각으로 격리되어 Vue가 못 보므로 div v-for 사용 -->
                     <div v-for="tab in termTabList" :key="'host-'+tab.id" :data-term="tab.id" v-show="terminal.activeTab === tab.id"
+                        @wheel="onTermHostWheel"
                         class="term-host absolute inset-0 bg-[#0c0c0e] p-2.5"></div>
+
+                    <!-- 스크롤백 뷰어: 읽기전용 xterm에 서버 capture-pane 결과를 그림 -->
+                    <div v-if="terminal.history.open" @wheel="onHistoryWheel" class="absolute inset-0 z-10 bg-[#0c0c0e] flex flex-col">
+                        <div class="flex items-center gap-2.5 px-3 py-1.5 bg-zinc-950 border-b border-zinc-800 shrink-0">
+                            <svg class="w-3.5 h-3.5 text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3v5h5"></path></svg>
+                            <span class="text-[11px] font-medium text-zinc-300 shrink-0">스크롤백</span>
+                            <span class="text-[10px] font-mono text-zinc-600 truncate">{{ terminal.history.lines }}줄 · {{ terminal.history.fetchedAt }} 스냅샷</span>
+                            <span v-if="terminal.history.loading" class="text-[10px] font-mono text-amber-400 animate-pulse shrink-0">불러오는 중...</span>
+                            <button @click="closeHistoryViewer" class="ml-auto shrink-0 text-[11px] font-medium px-2 py-0.5 rounded-md border border-zinc-700 bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition">현재 터미널로 ↓</button>
+                        </div>
+                        <div class="history-host flex-1 min-h-0"></div>
+                    </div>
                 </div>
 
                 <!-- 터미널 탭 푸터 힌트 -->
@@ -1429,6 +1445,10 @@
                         webTermAvailable: true,
                         tabs: [{ id: 'main', label: 'Main Server', kind: 'log', closable: false, term: null, fit: null, ws: null, connected: false }],
                         activeTab: 'main',
+                        // 스크롤백 뷰어: tmux 클라이언트 프로토콜은 히스토리를 클라이언트
+                        // 스크롤백에 안 쌓이게 하므로, 위로 스크롤하면 서버 capture-pane을
+                        // 읽기전용 xterm에 그려 보여준다
+                        history: { open: false, term: null, loading: false, lines: 0, fetchedAt: '' },
                     },
                     isFetchingReleases: false, showUpdateModal: false,
                     releaseInfo: { tag_name: "", html_url: "", assets: [], installed: false, install_root: "", stable_tag: "", nightly_tag: "", driver_max_cuda: null },
@@ -2514,6 +2534,7 @@
                 closeTerminalPanel() {
                     this.terminal.show = false;
                     this.stopTerminalPolling();
+                    if (this.terminal.history.open) this.closeHistoryViewer();
                     // xterm 인스턴스는 v-if가 없앤 호스트 요소에 묶여 있어 재사용 불가 —
                     // 인스턴스를 폐기하고 다음 열림 때 재생성한다.
                     // tmux 세션 자체는 서버에 그대로 두어 다른 기기/다음 접속에서 이어진다.
@@ -2618,14 +2639,7 @@
                         fontFamily: "'JetBrains Mono', monospace",
                         scrollback: 20000,
                         allowProposedApi: true,
-                        theme: {
-                            background: '#0c0c0e',
-                            foreground: '#d4d4d8',
-                            cursor: '#818cf8',
-                            selectionBackground: 'rgba(99,102,241,0.35)',
-                            black: '#09090b', red: '#f87171', green: '#34d399', yellow: '#fbbf24',
-                            blue: '#60a5fa', magenta: '#c084fc', cyan: '#22d3ee', white: '#e4e4e7',
-                        }
+                        theme: this.termTheme(),
                     });
                     const fit = new window.FitAddon.FitAddon();
                     term.loadAddon(fit);
@@ -2636,6 +2650,27 @@
                         if (tab.ws && tab.ws.readyState === WebSocket.OPEN) {
                             tab.ws.send(new TextEncoder().encode(d));
                         }
+                    });
+                    // tmux의 redraw 모델이라 브라우저 xterm의 스크롤백은 비어 있는데,
+                    // xterm은 스크롤백이 없는 상태에서 위로 스크롤하면 UP 화살표 키를
+                    // 앱에 보낸다(← 입력줄 히스토리 내비게이션으로 보이는 버그의 정체).
+                    // 커스텀 휠 핸들러로 가로막고, 버블링되는 이벤트를 onTermHostWheel이
+                    // 받아 스크롤백 뷰어(서버 히스토리)를 연다.
+                    term.attachCustomWheelEventHandler((event) => this.onLiveCustomWheel(tab, event));
+                    // xterm은 ESC 키다운을 처리할 때 stopPropagation()을 해서
+                    // document 레벨 전역 핸들러(onGlobalKeydown)가 ESC를 못 받는다.
+                    // 그래서 뷰어가 열려 있으면 커스텀 키 핸들러(가장 먼저 호출)에서
+                    // 닫고 false 반환 → ESC는 셸에 주입하지 않고 소비.
+                    // stopPropagation은 직접: 전역 핸들러가 같은 이벤트로
+                    // 이어가서(뷰어는 이미 닫혀서) 터미널 패널까지 닫아버리는 것을 막는다.
+                    term.attachCustomKeyEventHandler((e) => {
+                        if (e.type === 'keydown' && e.key === 'Escape' && this.terminal.history.open) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            this.closeHistoryViewer();
+                            return false;
+                        }
+                        return true;
                     });
                     tab._resizeHandler = () => {
                         if (this.terminal.activeTab === tab.id) this.fitTerminalTab(tab);
@@ -2676,7 +2711,9 @@
                         if (typeof ev.data === 'string') {
                             try {
                                 const m = JSON.parse(ev.data);
-                                if (m.type === 'err' && tab.term) {
+                                if (m.type === 'history') {
+                                    this.renderHistoryData(tab, m);
+                                } else if (m.type === 'err' && tab.term) {
                                     tab.connected = false;
                                     tab.term.writeln('\r\n\x1b[31m' + m.message + '\x1b[0m');
                                 } else if (m.type === 'closed' && tab.term) {
@@ -2737,8 +2774,130 @@
                     if (tab.term) { try { tab.term.dispose(); } catch (e) {} tab.term = null; tab.fit = null; }
                     tab.connected = false;
                 },
+
+                // ---------- 스크롤백 뷰어 ----------
+                // tmux는 클라이언트에게 화면 차이만 redraw 하기 때문에 브라우저 xterm의
+                // 스크롤백에 히스토리가 쌓이지 않는다(cat/log가 스크롤을 타도). 그래서
+                // 위로 스크롤할 때 서버의 capture-pane(히스토리 20000줄)을 가져와
+                // 읽기전용 xterm 오버레이로 표시 — 여기서 드래그/선택으로 복사할 수 있다.
+                termTheme() {
+                    return {
+                        background: '#0c0c0e',
+                        foreground: '#d4d4d8',
+                        cursor: '#818cf8',
+                        selectionBackground: 'rgba(99,102,241,0.35)',
+                        black: '#09090b', red: '#f87171', green: '#34d399', yellow: '#fbbf24',
+                        blue: '#60a5fa', magenta: '#c084fc', cyan: '#22d3ee', white: '#e4e4e7',
+                    };
+                },
+                openHistoryViewer(tab) {
+                    if (!tab) tab = this.terminal.tabs.find(t => t.id === this.terminal.activeTab);
+                    if (!tab || tab.kind !== 'term') return;
+                    if (this.terminal.history.open) return;
+                    if (!tab.ws || tab.ws.readyState !== WebSocket.OPEN) {
+                        // 연결이 죽어 있으면 재연결 후 사용자가 다시 요청
+                        this.reattachTerminalWs(tab);
+                        return;
+                    }
+                    this.terminal.history = { open: true, term: null, loading: true, lines: 0, fetchedAt: '' };
+                    tab.ws.send(JSON.stringify({ type: 'history', lines: 20000 }));
+                },
+                renderHistoryData(tab, msg) {
+                    const h = this.terminal.history;
+                    if (!h.open) return;
+                    if (!window.Terminal || !window.FitAddon) {
+                        this.terminal.history = { open: false, term: null, loading: false, lines: 0, fetchedAt: '' };
+                        return;
+                    }
+                    let text = '';
+                    try {
+                        const bin = atob(msg.data || '');
+                        const bytes = new Uint8Array(bin.length);
+                        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                        text = new TextDecoder().decode(bytes);
+                    } catch (e) {}
+                    const host = document.getElementById('app').querySelector('.history-host');
+                    if (!host) {
+                        // v-if DOM 플러시 대기
+                        this.$nextTick(() => this.renderHistoryData(tab, msg));
+                        return;
+                    }
+                    const cols = (tab.term && tab.term.cols > 2) ? tab.term.cols : 80;
+                    const term = new window.Terminal({
+                        cols, rows: 50,
+                        scrollback: 20000,
+                        disableStdin: true, disableCursor: true, cursorBlink: false,
+                        fontSize: 12.5,
+                        fontFamily: "'JetBrains Mono', monospace",
+                        theme: this.termTheme(),
+                    });
+                    const fit = new window.FitAddon.FitAddon();
+                    term.loadAddon(fit);
+                    term.open(host);
+                    h.term = term;
+                    // 뷰어의 xterm에도 ESC 처리 — 포커스가 뷰어에 있더라도
+                    // ESC로 닫을 수 있고(커스텀 핸들러가 _keyDown보다 먼저 호출,
+                    // false 반환 시 xterm이 stopPropagation/내장 처리를 안 함)
+                    // 읽기전용이라 ESC는 데이터로 절대 밖으로 나가지 않는다.
+                    term.attachCustomKeyEventHandler((e) => {
+                        if (e.type === 'keydown' && e.key === 'Escape') {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            this.closeHistoryViewer();
+                            return false;
+                        }
+                        return true;
+                    });
+                    // 쓰기 끝난 뒤 현재(라이브 화면 직전) 위치로 — 거기서 위로 스크롤
+                    term.write(text || '(스크롤백이 없습니다)', () => {
+                        try { fit.fit(); } catch (e) {}
+                        term.scrollToBottom();
+                        h.loading = false;
+                        h.lines = text ? text.split('\n').length : 0;
+                        h.fetchedAt = new Date().toTimeString().slice(0, 8);
+                    });
+                },
+                closeHistoryViewer() {
+                    const h = this.terminal.history;
+                    if (h.term) { try { h.term.dispose(); } catch (e) {} }
+                    this.terminal.history = { open: false, term: null, loading: false, lines: 0, fetchedAt: '' };
+                    const tab = this.terminal.tabs.find(t => t.id === this.terminal.activeTab);
+                    if (tab && tab.term) {
+                        this.$nextTick(() => { try { tab.term.focus(); } catch (e) {} });
+                    }
+                },
+                // xterm의 내장 휠 처리를 건너뛸지 결정 (false 반환 → 내장 로직 전체 스킵,
+                // 이벤트는 버블링으로 아래 onTermHostWheel에 계속 전달됨)
+                onLiveCustomWheel(tab, event) {
+                    if (this.terminal.history.open) return true;
+                    // tmux 환경에서 브라우저 스크롤백은 사실상 비어 있으므로,
+                    // 위로 스크롤은 전부 스크롤백 뷰어(서버 히스토리)로
+                    return !(event.deltaY < 0);
+                },
+                // 라이브 터미널 위로 스크롤 → 스크롤백 뷰어로 이동
+                onTermHostWheel(event) {
+                    const tab = this.terminal.tabs.find(t => t.id === this.terminal.activeTab);
+                    if (!tab || tab.kind !== 'term' || !tab.term) return;
+                    if (this.terminal.history.open) return;
+                    if (event.deltaY < 0) {
+                        event.preventDefault();
+                        this.openHistoryViewer(tab);
+                    }
+                },
+                // 뷰어 아래 끝에서 계속 아래로 스크롤 → 라이브 터미널로 복귀
+                onHistoryWheel(event) {
+                    const h = this.terminal.history;
+                    if (!h.term) return;
+                    const b = h.term.buffer.active;
+                    const atBottom = b.viewportY >= b.length - h.term.rows - 1;
+                    if (event.deltaY > 0 && atBottom) {
+                        event.preventDefault();
+                        this.closeHistoryViewer();
+                    }
+                },
                 onGlobalKeydown(event) {
                     if (event.key !== 'Escape') return;
+                    if (this.terminal.history.open) { this.closeHistoryViewer(); return; }
                     if (this.memo.show) this.closeMemo();
                     if (this.terminal.show) this.closeTerminalPanel();
                 },
@@ -3116,6 +3275,7 @@
                 document.removeEventListener('keydown', this.onGlobalKeydown);
                 this.stopTerminalPolling();
                 if (this.memoTimeout) clearTimeout(this.memoTimeout);
+                this.closeHistoryViewer();
                 for (const tab of this.terminal.tabs) this.disposeTerminalTab(tab);
             }
         }).mount('#app');

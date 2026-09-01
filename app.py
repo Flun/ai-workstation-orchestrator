@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import glob
 import hashlib
 import json
@@ -3095,6 +3096,22 @@ def _sudo_tmux(*args, timeout=20):
     return proc.returncode, (proc.stdout or "").strip(), (proc.stderr or "").strip()
 
 
+def _tmux_capture(name: str, lines: int) -> str:
+    """패네스 히스토리(현재 화면 위 N줄)를 텍스트로 캡처. -e 옵션으로 색상 포함.
+
+    tmux는 클라이언트(브라우저) 프로토콜이 화면 차이만 보내기 때문에 클라이언트
+    쪽 xterm 스크롤백에 히스토리가 쌓이지 않는다 — 브라우저가 스크롤을 올리면
+    이 함수로 서버 쪽 히스토리를 건네준다."""
+    proc = subprocess.run(
+        ["sudo", "-n", "tmux", "capture-pane", "-p", "-e",
+         "-S", f"-{lines}", "-E", "-2", "-t", name],
+        capture_output=True, timeout=30,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError((proc.stderr or b"").decode("utf-8", "replace").strip() or "tmux capture-pane failed")
+    return (proc.stdout or b"").decode("utf-8", "replace")
+
+
 def _web_terminal_available() -> bool:
     if IS_WINDOWS:
         return False
@@ -3163,6 +3180,16 @@ async def terminal_websocket(ws: WebSocket, name: str, cols: int = 0, rows: int 
     init_rows = min(max(int(rows or 0), 1), 500) or 50
     init_cols = min(max(int(cols or 0), 1), 500) or 200
     fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", init_rows, init_cols, 0, 0))
+    # tmux는 attach 직후 클라이언트에 '\x1b[?1h\x1b='(application cursor +
+    # application keypad)를 보낸다(세션 크기 ≠ 클라이언트 크기면 resize 때문에
+    # 2회). application keypad(DECKPAM)는 브라우저 xterm에 쓸모없는 옛 모드로,
+    # keypad 영역 키 처리가 비표준이 될 수 있다 → attach 초기 버스트(첫 4KB)에서
+    # '\x1b='만 걷어낸다. '\x1b[?1h'(커서 키)는 tmux가 정당한范围内使用하므로
+    # 유지한다. pty read 경계에서 ESC / '='가 갈라질 수 있으니 1바이트 캐리
+    # 처리. 버스트 이후(앱이 스스로 mode를 설정/해제하는 경우)는 그대로
+    # 통과시킨다.
+    _init_filter_left = 4096
+    _init_carry = b""
     # systemd user 서비스 환경은 TERM=dumb 이라 tmux attach가 거부한다.
     # 브라우저 쪽(xterm.js)은 xterm-256color 터미널이다.
     attach_env = dict(os.environ)
@@ -3200,6 +3227,7 @@ async def terminal_websocket(ws: WebSocket, name: str, cols: int = 0, rows: int 
                 pass
 
     def on_read():
+        nonlocal _init_filter_left, _init_carry
         try:
             data = os.read(master, 65536)
         except (BlockingIOError, InterruptedError):
@@ -3207,6 +3235,22 @@ async def terminal_websocket(ws: WebSocket, name: str, cols: int = 0, rows: int 
         except OSError:
             data = b""
         if data:
+            if _init_filter_left > 0:
+                data = _init_carry + data
+                if len(data) > _init_filter_left:
+                    head, data = data[:_init_filter_left], data[_init_filter_left:]
+                else:
+                    head = data
+                    data = b""
+                _init_filter_left = max(0, _init_filter_left - len(head))
+                head = head.replace(b"\x1b=", b"")
+                if _init_filter_left > 0 and head.endswith(b"\x1b"):
+                    # read 경계에서 갈라진 ESC — 다음 채드와 합쳐 '\x1b='을 잡는다
+                    head = head[:-1]
+                    _init_carry = b"\x1b"
+                else:
+                    _init_carry = b""
+                data = head + data
             async def pump():
                 try:
                     await ws.send_bytes(data)
@@ -3246,6 +3290,20 @@ async def terminal_websocket(ws: WebSocket, name: str, cols: int = 0, rows: int 
                         fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
                     except (ValueError, OSError):
                         continue
+                elif msg.get("type") == "history":
+                    try:
+                        n = min(max(int(msg.get("lines") or 20000), 10), 20000)
+                        text = _tmux_capture(name, n)
+                        await ws.send_text(json.dumps({
+                            "type": "history",
+                            "lines": n,
+                            "data": base64.b64encode(text.encode("utf-8", "replace")).decode("ascii"),
+                        }))
+                    except Exception as exc:  # noqa: BLE001 — 클라이언트가 표시할 수 있게
+                        try:
+                            await ws.send_text(json.dumps({"type": "err", "message": f"히스토리 조회 실패: {exc}"}))
+                        except Exception:
+                            pass
     except Exception:
         pass
     finally:
