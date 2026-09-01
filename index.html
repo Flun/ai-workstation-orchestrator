@@ -1208,23 +1208,80 @@
             </div>
         </transition>
 
-        <!-- Floating Memo -->
-        <button @click="toggleMemo" class="fixed bottom-6 right-6 w-12 h-12 bg-zinc-800 border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-700 rounded-full shadow-lg flex items-center justify-center text-zinc-300 z-40 transition" title="Quick Notes">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
-        </button>
+        <!-- 플로팅 버튼 스택: 터미널 로그(위) / 메모(아래) -->
+        <div class="fixed bottom-6 right-6 z-40 flex flex-col items-center gap-3">
+            <button @click="toggleTerminal" title="Main Server 터미널" aria-label="Main Server 터미널 열기"
+                class="w-12 h-12 rounded-full border shadow-lg flex items-center justify-center transition"
+                :class="terminal.show ? 'bg-emerald-500/15 border-emerald-500/60 text-emerald-300' : 'bg-zinc-800 border-zinc-700 hover:border-zinc-500 hover:bg-zinc-700 text-zinc-300'">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m4 17 6-5-6-5M12 19h8"></path></svg>
+            </button>
+            <button @click="toggleMemo" title="메모" aria-label="메모 열기"
+                class="w-12 h-12 rounded-full border shadow-lg flex items-center justify-center transition"
+                :class="memo.show ? 'bg-indigo-500/15 border-indigo-500/60 text-indigo-300' : 'bg-zinc-800 border-zinc-700 hover:border-zinc-500 hover:bg-zinc-700 text-zinc-300'">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+            </button>
+        </div>
 
+        <!-- 바깥 클릭 감지 오버레이 (투명, 페이지 어두워뜨림 없음) -->
+        <transition name="fade">
+            <div v-if="memo.show || terminal.show" class="fixed inset-0 z-30" @click.self="closeMemo(); closeTerminal()"></div>
+        </transition>
+
+        <!-- 메모 패널 -->
         <transition name="slide-up">
-            <div v-if="memo.show" class="fixed bottom-24 right-6 w-80 sm:w-96 bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl z-40 flex flex-col overflow-hidden">
-                <div class="flex justify-between items-center bg-zinc-950 px-4 py-3 border-b border-zinc-800">
-                    <h3 class="font-medium text-zinc-200 text-xs uppercase tracking-wider">Scratchpad</h3>
-                    <button @click="toggleMemo" class="text-zinc-500 hover:text-zinc-300 transition">
+            <div v-if="memo.show" role="dialog" aria-label="메모" class="fixed bottom-36 right-6 w-[calc(100vw-3rem)] sm:w-96 bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl z-40 flex flex-col overflow-hidden">
+                <div class="flex items-center gap-2.5 bg-zinc-950 px-4 py-3 border-b border-zinc-800">
+                    <span class="w-2 h-2 rounded-full bg-indigo-500"></span>
+                    <h3 class="font-semibold text-zinc-200 text-xs uppercase tracking-wider">메모</h3>
+                    <span class="text-[10px] text-zinc-600 font-mono">{{ memo.content.length }}자</span>
+                    <button @click="closeMemo" class="ml-auto text-zinc-500 hover:text-zinc-200 transition" title="닫기 (Esc)">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                     </button>
                 </div>
-                <textarea v-model="memo.content" @input="debouncedSaveMemo" class="w-full h-64 bg-transparent text-sm p-4 outline-none text-zinc-300 resize-none font-mono selection:bg-zinc-800" placeholder="Store ports, prompts, or quick config notes. Auto-saves locally."></textarea>
-                <div class="bg-zinc-950 px-4 py-2 text-[10px] text-zinc-500 flex justify-end items-center gap-2 border-t border-zinc-800">
-                    <span v-if="memo.saving" class="flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span> Syncing</span>
-                    <span v-else class="flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-zinc-600"></span> Synced</span>
+                <textarea v-model="memo.content" @input="debouncedSaveMemo" @keydown.ctrl.s.prevent="saveMemoNow" @keydown.meta.s.prevent="saveMemoNow"
+                    class="w-full h-72 bg-transparent text-[13px] p-4 outline-none text-zinc-300 resize-none font-mono leading-relaxed selection:bg-indigo-500/30"
+                    placeholder="포트, 프롬프트, 간단한 설정 메모를 적어두세요. 입력 후 1초면 서버에 자동 저장됩니다. (Ctrl+S 즉시 저장)"></textarea>
+                <div class="bg-zinc-950 px-4 py-2.5 text-[10px] text-zinc-500 flex items-center justify-between gap-2 border-t border-zinc-800">
+                    <div class="flex items-center gap-1.5 min-w-0">
+                        <span class="w-1.5 h-1.5 rounded-full shrink-0" :class="memo.saving ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500'"></span>
+                        <span class="truncate" v-if="memo.saving">서버 저장 중...</span>
+                        <span v-else-if="memo.lastSaved">서버에 저장됨 · {{ memo.lastSaved }}</span>
+                        <span v-else>서버 자동 저장 대기</span>
+                    </div>
+                    <div class="flex items-center gap-1.5 shrink-0">
+                        <button @click="saveMemoNow" class="px-2.5 py-1 rounded-md border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium">저장</button>
+                        <button @click="clearMemo" class="px-2.5 py-1 rounded-md border border-zinc-800 text-zinc-500 hover:text-rose-400 hover:border-rose-500/40 font-medium">지우기</button>
+                    </div>
+                </div>
+            </div>
+        </transition>
+
+        <!-- Main Server 터미널 로그 패널 -->
+        <transition name="slide-up">
+            <div v-if="terminal.show" role="dialog" aria-label="Main Server 터미널" class="fixed bottom-36 right-6 w-[calc(100vw-3rem)] h-[68vh] max-h-[48rem] sm:w-[40rem] bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl z-40 flex flex-col overflow-hidden">
+                <div class="flex items-center gap-3 bg-zinc-950 px-4 py-3 border-b border-zinc-800">
+                    <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0" :class="!terminal.paused ? 'animate-pulse' : ''"></span>
+                    <h3 class="min-w-0 truncate font-mono text-sm font-medium text-zinc-200">Main Server <span class="text-zinc-500">/ 터미널</span></h3>
+                    <span class="text-[10px] text-zinc-600 font-mono shrink-0">{{ terminal.lines.length }}줄</span>
+                    <div class="ml-auto flex items-center gap-2.5 shrink-0">
+                        <label class="flex items-center gap-1.5 text-[11px] text-zinc-400 cursor-pointer hover:text-zinc-200 transition select-none">
+                            <input type="checkbox" v-model="terminal.autoScroll" class="w-3.5 h-3.5 rounded bg-zinc-800 border-zinc-700 text-emerald-500 focus:ring-emerald-500/50"> 자동 스크롤
+                        </label>
+                        <button @click="terminal.paused = !terminal.paused" class="text-[11px] font-medium px-2.5 py-1 rounded-md border transition"
+                            :class="terminal.paused ? 'bg-amber-500/15 border-amber-500/40 text-amber-300' : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700'">
+                            {{ terminal.paused ? '재개' : '일시정지' }}
+                        </button>
+                        <button @click="closeTerminal" class="text-zinc-500 hover:text-zinc-200 transition" title="닫기 (Esc)">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        </button>
+                    </div>
+                </div>
+                <div id="terminal-log" class="flex-1 min-h-0 overflow-y-auto bg-[#0c0c0e] p-3 sm:p-4 font-mono text-[11px] leading-[1.65]">
+                    <div v-if="!terminal.lines.length" class="text-zinc-600">로딩 중...</div>
+                    <div v-for="(line, i) in terminal.lines" :key="i" class="flex gap-2.5 whitespace-pre-wrap break-words">
+                        <span class="shrink-0 select-none text-zinc-600/90">{{ line.t }}</span>
+                        <span class="min-w-0 text-zinc-300">{{ line.s }}</span>
+                    </div>
                 </div>
             </div>
         </transition>
@@ -1293,7 +1350,8 @@
                         { key: 'fast_disk', label: '--fast-disk' },
                         { key: 'fast_fp16_accumulation', label: '--fast fp16_accumulation' }
                     ],
-                    memo: { show: false, content: '', saving: false }, memoTimeout: null,
+                    memo: { show: false, content: '', saving: false, lastSaved: null }, memoTimeout: null,
+                    terminal: { show: false, lines: [], autoScroll: true, paused: false, timer: null },
                     isFetchingReleases: false, showUpdateModal: false,
                     releaseInfo: { tag_name: "", html_url: "", assets: [], installed: false, install_root: "", stable_tag: "", nightly_tag: "", driver_max_cuda: null },
                     selectedAsset: null, isUpdating: false,
@@ -2291,26 +2349,96 @@
                     } catch(e) {}
                 },
 
+                formatClockTime(ts) {
+                    const d = (ts instanceof Date) ? ts : new Date(ts < 1e12 ? ts * 1000 : ts);
+                    const pad = n => String(n).padStart(2, '0');
+                    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+                },
                 async fetchMemo() {
                     try {
                         const res = await fetch('/api/memo');
                         const data = await res.json();
                         this.memo.content = data.memo || "";
+                        if (data.mtime) this.memo.lastSaved = this.formatClockTime(data.mtime);
                     } catch (e) {}
                 },
+                openMemo() {
+                    if (this.terminal.show) this.closeTerminal();
+                    this.memo.show = true;
+                    if (!this.memo.content) this.fetchMemo();
+                },
+                closeMemo() {
+                    this.memo.show = false;
+                },
                 toggleMemo() {
-                    this.memo.show = !this.memo.show;
-                    if (this.memo.show && !this.memo.content) this.fetchMemo();
+                    if (this.memo.show) this.closeMemo();
+                    else this.openMemo();
+                },
+                async saveMemoNow() {
+                    this.memo.saving = true;
+                    clearTimeout(this.memoTimeout);
+                    try {
+                        await fetch('/api/memo?memo=' + encodeURIComponent(this.memo.content), { method: 'POST' });
+                        this.memo.lastSaved = this.formatClockTime(Date.now());
+                    } catch(e) {}
+                    this.memo.saving = false;
                 },
                 debouncedSaveMemo() {
                     this.memo.saving = true;
                     clearTimeout(this.memoTimeout);
-                    this.memoTimeout = setTimeout(async () => {
-                        try {
-                            await fetch('/api/memo?memo=' + encodeURIComponent(this.memo.content), { method: 'POST' });
-                        } catch(e) {}
-                        this.memo.saving = false;
-                    }, 1000); 
+                    this.memoTimeout = setTimeout(() => this.saveMemoNow(), 1000);
+                },
+                async clearMemo() {
+                    if (!this.memo.content) return;
+                    if (!confirm('메모 내용을 모두 지울까요?\n서버에 저장된 복사본도 함께 삭제됩니다.')) return;
+                    this.memo.content = '';
+                    await this.saveMemoNow();
+                },
+
+                openTerminal() {
+                    if (this.memo.show) this.closeMemo();
+                    this.terminal.show = true;
+                    this.terminal.paused = false;
+                    this.fetchTerminal();
+                    this.startTerminalPolling();
+                },
+                closeTerminal() {
+                    this.terminal.show = false;
+                    this.stopTerminalPolling();
+                },
+                toggleTerminal() {
+                    if (this.terminal.show) this.closeTerminal();
+                    else this.openTerminal();
+                },
+                startTerminalPolling() {
+                    this.stopTerminalPolling();
+                    this.terminal.timer = setInterval(() => {
+                        if (this.terminal.show && !this.terminal.paused && !document.hidden) this.fetchTerminal();
+                    }, 2000);
+                },
+                stopTerminalPolling() {
+                    if (this.terminal.timer) { clearInterval(this.terminal.timer); this.terminal.timer = null; }
+                },
+                async fetchTerminal() {
+                    try {
+                        const res = await fetch(`/api/terminal/main?lines=400&t=${Date.now()}`);
+                        if (!res.ok) return;
+                        const data = await res.json();
+                        this.terminal.lines = (data.lines || []).map(l =>
+                            (typeof l === 'string') ? { t: '', s: l } : { t: l.t || '', s: l.s || '' }
+                        );
+                        if (this.terminal.autoScroll) {
+                            this.$nextTick(() => {
+                                const el = document.getElementById('terminal-log');
+                                if (el) el.scrollTop = el.scrollHeight;
+                            });
+                        }
+                    } catch(e) {}
+                },
+                onGlobalKeydown(event) {
+                    if (event.key !== 'Escape') return;
+                    if (this.memo.show) this.closeMemo();
+                    if (this.terminal.show) this.closeTerminal();
                 },
 
                 async openFolder(target) {
@@ -2678,6 +2806,14 @@
                         this.fetchOsBoot();
                     }
                 }, 5000);
+
+                // Esc: 열린 플로팅 패널(메모/터미널) 닫기
+                document.addEventListener('keydown', this.onGlobalKeydown);
+            },
+            beforeUnmount() {
+                document.removeEventListener('keydown', this.onGlobalKeydown);
+                this.stopTerminalPolling();
+                if (this.memoTimeout) clearTimeout(this.memoTimeout);
             }
         }).mount('#app');
     </script>

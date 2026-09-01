@@ -2943,9 +2943,10 @@ def deepseek_harness_stop(request: Request):
 def memo_get():
     try:
         with open(MEMO_FILE, "r", encoding="utf-8") as f:
-            return {"memo": f.read()}
+            memo = f.read()
+        return {"memo": memo, "mtime": int(os.path.getmtime(MEMO_FILE))}
     except FileNotFoundError:
-        return {"memo": ""}
+        return {"memo": "", "mtime": 0}
 
 
 @app.post("/api/memo")
@@ -2990,6 +2991,52 @@ def clear_log(name: str):
         except OSError:
             return {"ok": False}
     return {"ok": True}
+
+
+_JOURNAL_LINE_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})\S*\s+\S+\s+\S+\[\d+\]:\s?(.*)$"
+)
+
+
+def _main_terminal_lines(lines: int):
+    """main_server 자신의 터미널 출력(stdout/stderr)을 읽어온다.
+
+    Linux는 user systemd 서비스이므로 사용자 저널에서 순수 stdout/stderr
+    레코드만 가져온다. sudo PAM처럼 syslog 경유하는 자식 프로세스 노이즈는
+    _TRANSPORT 필터로 제외한다. Windows는 슈퍼바이저가 app.py stdout을
+    logs/manager.log에 적어두므로 그 파일을 사용한다.
+    """
+    lines = min(max(int(lines or 400), 10), 2000)
+    if IS_WINDOWS:
+        return tail(os.path.join(BASE_DIR, "logs", "manager.log"), lines), "manager.log"
+
+    env = dict(os.environ)
+    if not env.get("XDG_RUNTIME_DIR"):
+        env["XDG_RUNTIME_DIR"] = f"/run/user/{os.getuid()}"
+    cmd = [
+        "journalctl", "--user", "-u", "main_server.service",
+        "_TRANSPORT=stdout", "_TRANSPORT=stderr",
+        "--no-pager", "--output=short-iso", f"-n{lines}",
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15, env=env)
+    except (OSError, subprocess.TimeoutExpired):
+        return [], "none"
+    parsed = []
+    for raw in proc.stdout.splitlines():
+        m = _JOURNAL_LINE_RE.match(raw)
+        if m:
+            date, hhmmss, msg = m.groups()
+            parsed.append({"t": f"{date[5:]} {hhmmss}", "s": msg})
+        else:
+            parsed.append({"t": "", "s": raw})
+    return parsed[-lines:], "journal"
+
+
+@app.get("/api/terminal/main")
+def terminal_main(lines: int = 400):
+    body, source = _main_terminal_lines(lines)
+    return {"lines": body, "source": source, "count": len(body)}
 
 
 @app.get("/api/last_run")
