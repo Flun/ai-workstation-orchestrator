@@ -3097,14 +3097,21 @@ def _sudo_tmux(*args, timeout=20):
 
 
 def _tmux_capture(name: str, lines: int) -> str:
-    """패네스 히스토리(현재 화면 위 N줄)를 텍스트로 캡처. -e 옵션으로 색상 포함.
+    """패네스 히스토리(가장 오래된 줄부터 현재 화면까지)를 텍스트로 캡처.
+    -e 옵션으로 SGR 색상 포함.
 
     tmux는 클라이언트(브라우저) 프로토콜이 화면 차이만 보내기 때문에 클라이언트
     쪽 xterm 스크롤백에 히스토리가 쌓이지 않는다 — 브라우저가 스크롤을 올리면
-    이 함수로 서버 쪽 히스토리를 건네준다."""
+    이 함수로 서버 쪽 히스토리를 건네준다.
+
+    tmux 3.4에서 -E의 음수 좌표는 -S 기준 상대 위치로 해석되어(버전 간
+    불일치) 의도대로 잘리지 않으므로 -E를 쓰지 않고 전체 범위를 캡처한다.
+    -p 출력은 LF(0x0A)만 사용한다 — 클라이언트(xterm) 쪽에서 CRLF로
+    정규화해야 줄이 0열부터 시작한다(LF만으로는 커서가 0열로 안 돌아감).
+    capture-pane은 pane만 잡으므로 tmux 상태줄은 포함되지 않는다."""
     proc = subprocess.run(
         ["sudo", "-n", "tmux", "capture-pane", "-p", "-e",
-         "-S", f"-{lines}", "-E", "-2", "-t", name],
+         "-S", f"-{lines}", "-t", name],
         capture_output=True, timeout=30,
     )
     if proc.returncode != 0:

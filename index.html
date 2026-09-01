@@ -2575,7 +2575,7 @@
 
                 // ---------- tmux 웹 터미널 탭 ----------
                 newTermTab() {
-                    return { id: '', label: '', kind: 'term', closable: true, term: null, fit: null, ws: null, connected: false, _resizeHandler: null };
+                    return { id: '', label: '', kind: 'term', closable: true, term: null, fit: null, ws: null, connected: false, _resizeHandler: null, _lastCols: 0, _lastRows: 0, _attachRetries: 0, _resizeTimer: null, _attachAt: 0 };
                 },
                 // 서버의 tmux 세션을 탭으로 동기화 — 어떤 기기에서 접속하든
                 // 기존 세션이 탭으로 나타나 같은 터미널에 이어 붙는다(연속성).
@@ -2691,13 +2691,40 @@
                     this.attachTerminalWs(tab);
                 },
                 attachTerminalWs(tab) {
-                    if (tab.ws) { try { tab.ws.onclose = null; tab.ws.close(); } catch (e) {} }
+                    if (tab.ws) { try { tab.ws.onclose = null; tab.ws.close(); } catch (e) {} tab.ws = null; }
+                    // attach 전에 최종 크기를 재야 한다 — pty를 그 크기로 만들어
+                    // (서버가 TIOCSWINSZ) attach 직후 resize로 tmux가 화면을
+                    // 지우는 일을 막는다. 호스트가 아직 레이아웃 안 잡혔다면
+                    // (패널 v-if 마운트 직후) 아래에서 재시도한다.
+                    if (tab.term && tab.fit) { try { tab.fit.fit(); } catch (e) {} }
+                    let cols = 0, rows = 0;
+                    if (tab.term && tab.term.cols > 1 && tab.term.rows > 1) {
+                        cols = tab.term.cols; rows = tab.term.rows;
+                        tab._lastCols = cols; tab._lastRows = rows;
+                    } else if (tab._lastCols > 1 && tab._lastRows > 1) {
+                        cols = tab._lastCols; rows = tab._lastRows;
+                    }
+                    if (!cols || !rows) {
+                        // 레이아웃 대기: 패널이 열려 있으면 다음 프레임에 재시도
+                        if (this.terminal.show && (tab._attachRetries || 0) < 30) {
+                            tab._attachRetries = (tab._attachRetries || 0) + 1;
+                            setTimeout(() => {
+                                if (!this.terminal.show || !tab.term) return;
+                                if (tab.ws && tab.ws.readyState <= WebSocket.OPEN &&
+                                    tab._attachAt && Date.now() - tab._attachAt < 2000) return;
+                                this.attachTerminalWs(tab);
+                            }, 50);
+                            return;
+                        }
+                    }
+                    tab._attachRetries = 0;
                     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
                     let url = `${proto}://${location.host}/ws/terminal/${encodeURIComponent(tab.id)}`;
-                    if (tab.term && tab.term.cols > 1 && tab.term.rows > 1) {
-                        url += `?cols=${tab.term.cols}&rows=${tab.term.rows}`;
+                    if (cols > 1 && rows > 1) {
+                        url += `?cols=${cols}&rows=${rows}`;
                     }
                     const ws = new WebSocket(url);
+                    tab._attachAt = Date.now();
                     ws.binaryType = 'arraybuffer';
                     tab.ws = ws;
                     ws.onopen = () => {
@@ -2743,15 +2770,20 @@
                     if (!tab.term || !tab.fit) return;
                     requestAnimationFrame(() => {
                         try {
-                            const prevCols = tab._lastCols, prevRows = tab._lastRows;
                             tab.fit.fit();
-                            tab._lastCols = tab.term.cols;
-                            tab._lastRows = tab.term.rows;
-                            // 크기가 실제로 바뀌었을 때만 resize 전달
-                            if (tab.ws && tab.ws.readyState === WebSocket.OPEN &&
-                                (prevCols !== tab.term.cols || prevRows !== tab.term.rows)) {
-                                tab.ws.send(JSON.stringify({ type: 'resize', cols: tab.term.cols, rows: tab.term.rows }));
-                            }
+                            const c = tab.term.cols, r = tab.term.rows;
+                            if (c === tab._lastCols && r === tab._lastRows) return;
+                            tab._lastCols = c; tab._lastRows = r;
+                            if (!this.terminal.show) return;
+                            // 크기가 실제로 바뀌었다 — attach된 채로 resize 메시지를
+                            // 보내면 tmux가 화면을 지울 수 있다(검정 화면 버그).
+                            // 대신 300ms 디바운스(창 드래그가 끝난 뒤 1회)로 새 크기에
+                            // 재접속: attach 시 tmux가 전체 화면을 다시 그려 정상화된다.
+                            if (tab._resizeTimer) clearTimeout(tab._resizeTimer);
+                            tab._resizeTimer = setTimeout(() => {
+                                tab._resizeTimer = null;
+                                if (this.terminal.show && tab.term) this.attachTerminalWs(tab);
+                            }, 300);
                         } catch (e) {}
                     });
                 },
@@ -2770,8 +2802,10 @@
                 },
                 disposeTerminalTab(tab) {
                     if (tab._resizeHandler) { window.removeEventListener('resize', tab._resizeHandler); tab._resizeHandler = null; }
+                    if (tab._resizeTimer) { clearTimeout(tab._resizeTimer); tab._resizeTimer = null; }
                     if (tab.ws) { try { tab.ws.onclose = null; tab.ws.close(); } catch (e) {} tab.ws = null; }
                     if (tab.term) { try { tab.term.dispose(); } catch (e) {} tab.term = null; tab.fit = null; }
+                    tab._attachRetries = 0;
                     tab.connected = false;
                 },
 
@@ -2816,6 +2850,9 @@
                         for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
                         text = new TextDecoder().decode(bytes);
                     } catch (e) {}
+                    // capture-pane -p는 LF만(0x0A) 찍는다 — xterm은 LF만으로는 커서를
+                    // 0열로 안 되돌려서 줄이 사다리꼴로 늘어진다. CRLF로 정규화.
+                    text = text.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n');
                     const host = document.getElementById('app').querySelector('.history-host');
                     if (!host) {
                         // v-if DOM 플러시 대기
@@ -2848,12 +2885,15 @@
                         }
                         return true;
                     });
+                    // 최종(호스트) 크기로 fit 하고 나서 쓰기 — 쓰기 전에 fit만
+                    // 의존하면 초기 80x50 기준으로 줄이 잘릴 수 있다
+                    try { fit.fit(); } catch (e) {}
                     // 쓰기 끝난 뒤 현재(라이브 화면 직전) 위치로 — 거기서 위로 스크롤
                     term.write(text || '(스크롤백이 없습니다)', () => {
                         try { fit.fit(); } catch (e) {}
                         term.scrollToBottom();
                         h.loading = false;
-                        h.lines = text ? text.split('\n').length : 0;
+                        h.lines = text ? text.split(/\r?\n/).length : 0;
                         h.fetchedAt = new Date().toTimeString().slice(0, 8);
                     });
                 },
