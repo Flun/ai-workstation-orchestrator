@@ -1349,8 +1349,11 @@
                     </div>
                     <!-- 인-DOM 템플릿에서는 <template>가 HTML template 요소를 만나면
                          content 조각으로 격리되어 Vue가 못 보므로 div v-for 사용 -->
+                    <!-- .capture 필수: tmux가 마우스 모드(SGR wheel)를 켜면 xterm이 자기
+                         .xterm 루트에서 모든 wheel을 stopPropagation한다(버블링 사망) —
+                         호스트의 캡처 단계(하강 경로)에서 가로채야 한다 -->
                     <div v-for="tab in termTabList" :key="'host-'+tab.id" :data-term="tab.id" v-show="terminal.activeTab === tab.id"
-                        @wheel="onTermHostWheel"
+                        @wheel.capture="onTermHostWheel"
                         class="term-host absolute inset-0 bg-[#0c0c0e] p-2.5"></div>
 
                     <!-- 스크롤백 뷰어: 읽기전용 xterm에 서버 capture-pane 결과를 그림 -->
@@ -2654,8 +2657,8 @@
                     // tmux의 redraw 모델이라 브라우저 xterm의 스크롤백은 비어 있는데,
                     // xterm은 스크롤백이 없는 상태에서 위로 스크롤하면 UP 화살표 키를
                     // 앱에 보낸다(← 입력줄 히스토리 내비게이션으로 보이는 버그의 정체).
-                    // 커스텀 휠 핸들러로 가로막고, 버블링되는 이벤트를 onTermHostWheel이
-                    // 받아 스크롤백 뷰어(서버 히스토리)를 연다.
+                    // 커스텀 휠 핸들러(아래)가 이 경로를 가로막고, 스크롤백 뷰어
+                    // 전환은 .term-host의 @wheel.capture(onTermHostWheel)가 담당한다.
                     term.attachCustomWheelEventHandler((event) => this.onLiveCustomWheel(tab, event));
                     // xterm은 ESC 키다운을 처리할 때 stopPropagation()을 해서
                     // document 레벨 전역 핸들러(onGlobalKeydown)가 ESC를 못 받는다.
@@ -2914,13 +2917,20 @@
                     // 위로 스크롤은 전부 스크롤백 뷰어(서버 히스토리)로
                     return !(event.deltaY < 0);
                 },
-                // 라이브 터미널 위로 스크롤 → 스크롤백 뷰어로 이동
+                // 라이브 터미널 위로 스크롤 → 스크롤백 뷰어로 이동.
+                // 캡처 단계 리스너임(.term-host @wheel.capture): tmux 마우스 모드
+                // (flux .tmux.conf의 mouse on)가 켜져 있으면 xterm이 .xterm 루트의
+                // 버블 리스너에서 stopPropagation+마우스 리포트를 하기 때문에 버블
+                // 단계로는 절대 못 온다. 캡처(하강) 단계에서 가로채고, 위로만
+                // stopPropagation — 아래 휠(정상 스크롤/마우스 리포트)은 그대로
+                // xterm에 건네준다.
                 onTermHostWheel(event) {
                     const tab = this.terminal.tabs.find(t => t.id === this.terminal.activeTab);
                     if (!tab || tab.kind !== 'term' || !tab.term) return;
                     if (this.terminal.history.open) return;
                     if (event.deltaY < 0) {
                         event.preventDefault();
+                        event.stopPropagation();
                         this.openHistoryViewer(tab);
                     }
                 },
