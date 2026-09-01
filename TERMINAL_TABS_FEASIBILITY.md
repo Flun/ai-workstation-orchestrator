@@ -282,6 +282,10 @@
   쓰기 때문에 페이지 전환/기기 간 연속. 열기 시 세션 리콘시일, 탭 추가/닫기,
   4~6라운드 검증된 동작(디퍼 attach, 디바운스 재접속, CRLF 뷰어, .capture
   휠, ESC 순서, 자동 재연결)을 그대로 반영.
+- **첫 탭 = "Main Server" 로그**: 메인 페이지와 동일 소스(/api/terminal/main,
+  2s 폴링, 자동 스크롤/일시정지)를 위젯에 그대로 포함 — 서브페이지에서 메인
+  로그 스트리밍도 본다. 로그 탭은 닫을 수 없으며(tmux 탭 전부가 닫혀도 유지),
+  tmux 탭을 닫으면 자동으로 로그 탭으로 돌아간다.
 - xterm 벤더 스크립트는 window.Terminal 없으면 동적 주입. 인-DOM 템플릿이
   아니라 template 문자열 사용(in-DOM의 <template v-for> 함정 회피).
 - 각 페이지 </body> 앞에 `<div id="float-panels-root"></div>` + 스크립트 한 줄.
