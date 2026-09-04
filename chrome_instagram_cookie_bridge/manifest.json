@@ -1,15 +1,18 @@
 {
   "manifest_version": 3,
-  "name": "LoRA Dataset Instagram Cookie Sync",
-  "version": "1.1.0",
-  "description": "현재 Chrome 세션의 Instagram 쿠키만 로컬 LoRA Dataset Studio로 동기화합니다.",
-  "permissions": ["cookies"],
+  "name": "LoRA Media Cookie Sync (Instagram + X/Twitter)",
+  "version": "1.3.0",
+  "description": "현재 Chrome 세션의 Instagram, X/Twitter 쿠키를 Studio 서버로 동기화합니다. 팝업에서 서버 주소를 지정할 수 있습니다.",
+  "permissions": ["cookies", "storage"],
   "host_permissions": [
     "https://*.instagram.com/*",
-    "http://127.0.0.1:8999/*"
+    "https://*.x.com/*",
+    "https://*.twitter.com/*",
+    "http://127.0.0.1:8999/*",
+    "http://192.168.1.243:8999/*"
   ],
   "action": {
-    "default_title": "Instagram 쿠키 동기화",
+    "default_title": "Instagram / X 쿠키 동기화",
     "default_popup": "popup.html"
   }
 }

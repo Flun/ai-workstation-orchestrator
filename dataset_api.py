@@ -41,6 +41,7 @@ from dataset_store import (
     restore_repaired_image,
     set_dataset_status,
     shared_instagram_cookie_path,
+    shared_x_cookie_path,
     update_image,
     update_job,
 )
@@ -413,6 +414,78 @@ def instagram_cookie_sync(data: BrowserCookieSync, dataset_id: Optional[str] = N
     if not accepted:
         raise HTTPException(status_code=400, detail="Instagram 쿠키를 찾지 못했습니다.")
     target = shared_instagram_cookie_path()
+    temporary = target.with_suffix(".tmp")
+    temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    temporary.replace(target)
+    return {"saved": True, "count": accepted, "has_session": has_session, "scope": "server"}
+
+
+X_COOKIE_DOMAINS = {"x.com", "twitter.com", "t.co"}
+
+
+def _is_x_cookie_domain(domain):
+    domain = (domain or "").strip().lower().lstrip(".")
+    if domain in X_COOKIE_DOMAINS:
+        return True
+    return any(domain.endswith("." + name) for name in X_COOKIE_DOMAINS)
+
+
+@router.post("/api/x-cookies")
+async def upload_x_cookies(file: UploadFile = File(...)):
+    content = await file.read(5 * 1024 * 1024 + 1)
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="cookies.txt is too large")
+    try:
+        text = content.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="cookies.txt는 UTF-8 텍스트여야 합니다.")
+    if not any(_is_x_cookie_domain(line.split("\t")[0].lstrip("#")) for line in text.splitlines() if line.strip()):
+        raise HTTPException(status_code=400, detail="X/Twitter 쿠키가 포함된 cookies.txt가 아닙니다.")
+    target = shared_x_cookie_path()
+    target.write_text(text, encoding="utf-8")
+    return {"saved": True, "filename": file.filename, "scope": "server"}
+
+
+@router.get("/api/x-cookies")
+def x_cookie_status():
+    return {"configured": shared_x_cookie_path().is_file(), "scope": "server"}
+
+
+@router.delete("/api/x-cookies")
+def x_cookie_delete():
+    shared_x_cookie_path().unlink(missing_ok=True)
+    return {"configured": False, "scope": "server"}
+
+
+@router.post("/api/x-cookie-sync")
+def x_cookie_sync(data: BrowserCookieSync):
+    lines = ["# Netscape HTTP Cookie File", "# Synced locally from Chrome extension", ""]
+    accepted = 0
+    has_session = False
+    for cookie in data.cookies:
+        domain = (cookie.domain or "").strip().lower()
+        if not _is_x_cookie_domain(domain):
+            continue
+        values = (domain, cookie.name, cookie.value, cookie.path)
+        if any("\t" in value or "\r" in value or "\n" in value for value in values):
+            continue
+        domain = domain if domain.startswith(".") else "." + domain
+        domain_field = "#HttpOnly_" + domain if cookie.httpOnly else domain
+        expires = max(int(cookie.expirationDate or 0), 0)
+        lines.append("\t".join((
+            domain_field,
+            "TRUE",
+            cookie.path or "/",
+            "TRUE" if cookie.secure else "FALSE",
+            str(expires),
+            cookie.name,
+            cookie.value,
+        )))
+        accepted += 1
+        has_session = has_session or cookie.name == "auth_token"
+    if not accepted:
+        raise HTTPException(status_code=400, detail="X/Twitter 쿠키를 찾지 못했습니다.")
+    target = shared_x_cookie_path()
     temporary = target.with_suffix(".tmp")
     temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
     temporary.replace(target)

@@ -14,6 +14,20 @@
       "enabled": false,
       "safety_margin_mb": 2048,
       "evict_threshold_percent": 0
+    },
+    "GPU-b7eb68ce-0fab-9aee-f04b-20485ffd85d4": {
+      "index": 1,
+      "name": "NVIDIA GeForce RTX 3090",
+      "enabled": false,
+      "safety_margin_mb": 2048,
+      "evict_threshold_percent": 0
+    },
+    "GPU-9dca838b-3713-a5a3-9ea5-a1a9eaa16e95": {
+      "index": 1,
+      "name": "NVIDIA CMP 170HX",
+      "enabled": false,
+      "safety_margin_mb": 2048,
+      "evict_threshold_percent": 0
     }
   },
   "default_evict_threshold_percent": 0,
@@ -24,10 +38,24 @@
   "active_util_percent": 5,
   "expected_vram_mb": {},
   "learned_peak_mb": {
-    "llama-8080": 21808,
-    "llama-8081": 54213,
-    "comfy-main": 29411,
-    "llama-44099": 29794
+    "llama-8080": 55287,
+    "llama-8081": 58436,
+    "comfy-main": 63178,
+    "llama-44099": 29794,
+    "llama-43147": 22358,
+    "llama-57035": 32046,
+    "llama-37711": 28054,
+    "llama-37565": 22892,
+    "llama-54789": 33178,
+    "llama-48313": 23174,
+    "llama-36303": 23202,
+    "llama-43487": 23174,
+    "llama-42075": 23174,
+    "llama-53289": 22772,
+    "llama-39467": 22782,
+    "llama-39989": 22782,
+    "llama-44453": 22782,
+    "llama-18080": 78182
   },
   "unknown_clear_residents": true,
   "post_admit_grace_sec": 30,

@@ -14,6 +14,7 @@ hw_history.json
 last_run.json
 memo.txt
 comfyui_settings.json
+service_visibility.json
 llama_settings.json
 llama_windows_settings.json
 vast_settings.json
@@ -41,3 +42,5 @@ _ps1_check.ps1
 _ps2_check.ps1
 _ps3.ps1
 _ps4.ps1
+.DS_Store
+._.DS_Store

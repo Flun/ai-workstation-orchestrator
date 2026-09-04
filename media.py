@@ -3,8 +3,10 @@ import copy
 import json
 import mimetypes
 import os
+import queue
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -106,15 +108,30 @@ def validate_media_download_url(value):
         )
     return value.strip()
 
+def is_x_media_host(hostname):
+    hostname = (hostname or "").lower()
+    return (
+        hostname in {"x.com", "twitter.com", "t.co"}
+        or hostname.endswith((".x.com", ".twitter.com", ".t.co"))
+    )
+
 def media_download_cookie_file(url):
-    if "instagram.com" not in (urlparse(url).hostname or "").lower():
-        return None
-    try:
-        from dataset_store import shared_instagram_cookie_path
-        path = shared_instagram_cookie_path()
-        return path if path.is_file() else None
-    except Exception:
-        return None
+    hostname = (urlparse(url).hostname or "").lower()
+    if "instagram.com" in hostname:
+        try:
+            from dataset_store import shared_instagram_cookie_path
+            path = shared_instagram_cookie_path()
+            return path if path.is_file() else None
+        except Exception:
+            return None
+    if is_x_media_host(hostname):
+        try:
+            from dataset_store import shared_x_cookie_path
+            path = shared_x_cookie_path()
+            return path if path.is_file() else None
+        except Exception:
+            return None
+    return None
 
 def build_media_download_format(resolution, video_codec):
     height_filter = "" if resolution == "best" else f"[height<=?{resolution}]"
@@ -144,6 +161,10 @@ MEDIA_DOWNLOAD_PERIOD_DAYS = {
     "five_years": 365 * 5,
     "all": None,
 }
+
+MEDIA_DOWNLOAD_JOBS = {}
+MEDIA_DOWNLOAD_JOBS_LOCK = threading.Lock()
+MEDIA_DOWNLOAD_JOB_LIMIT = 128
 
 def safe_download_component(value, fallback="unknown", max_length=120):
     value = " ".join(str(value or "").split())
@@ -414,10 +435,12 @@ def download_social_media(payload, job_dir, before_state=None, progress_callback
             ytdlp_error = str(exc).replace("ERROR: ", "").strip()
     else:
         gallery_result = run_gallery_media_download(url, job_dir, cookie_file, progress_callback=progress_callback)
-        try:
-            ytdlp_info = run_ytdlp_media_download(url, job_dir, resolution, video_codec, container, cookie_file, progress_callback=progress_callback)
-        except Exception as exc:
-            ytdlp_error = str(exc).replace("ERROR: ", "").strip()
+        # gallery-dl first; yt-dlp is the fallback when gallery failed to grab the media.
+        if not (gallery_result.returncode == 0 and list_downloaded_media(job_dir)):
+            try:
+                ytdlp_info = run_ytdlp_media_download(url, job_dir, resolution, video_codec, container, cookie_file, progress_callback=progress_callback)
+            except Exception as exc:
+                ytdlp_error = str(exc).replace("ERROR: ", "").strip()
 
     files = list_downloaded_media(job_dir)
     if before_state is not None:

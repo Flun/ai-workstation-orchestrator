@@ -140,6 +140,20 @@
                             </button>
                             <button type="button" @click="openDownloadFolder" class="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-zinc-800" title="다운로드 폴더 열기">폴더 열기</button>
                         </div>
+                        <div class="mt-2 flex items-center justify-between gap-2 rounded-md border border-zinc-800 bg-zinc-950/60 px-2 py-1.5">
+                            <span class="flex items-center gap-1.5 text-[11px] text-zinc-500">
+                                <span class="h-1.5 w-1.5 rounded-full" :class="xCookies.configured ? 'bg-emerald-500' : 'bg-zinc-600'"></span>
+                                <span>X/Twitter 로그인: {{ xCookies.configured ? '쿠키 저장됨' : '미설정' }}</span>
+                            </span>
+                            <span class="flex shrink-0 gap-1">
+                                <label v-if="!xCookies.configured" class="cursor-pointer rounded border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-[10px] font-medium text-zinc-300 hover:bg-zinc-800">
+                                    cookies.txt 업로드
+                                    <input type="file" accept=".txt" class="hidden" @change="uploadXCookies">
+                                </label>
+                                <button v-else type="button" @click="deleteXCookies" class="rounded border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-[10px] font-medium text-zinc-300 hover:bg-zinc-800">삭제</button>
+                            </span>
+                        </div>
+                        <p class="mt-1 text-[10px] leading-4 text-zinc-600">X/Twitter는 비로그인 상태에서는 일부 영상(긴 영상, 보호된 게시물 등)을 찾지 못합니다. Chrome 확장 프로그램(Chrome Media 쿠키 동기화)에서 "X/Twitter 쿠키 동기화"를 실행하거나 cookies.txt를 업로드하세요.</p>
                         <p class="mt-2 text-[11px] leading-4 text-zinc-500">개별 URL은 해당 게시물만, 계정 URL은 선택 기간의 미디어를 받습니다. Instagram 게시물의 이미지와 영상은 함께 저장됩니다.</p>
                         <p v-if="mediaDownload.folder" class="mt-1 truncate text-[10px] text-zinc-600" :title="mediaDownload.folder">저장: {{ mediaDownload.folder }}</p>
                         <div v-if="mediaDownload.files.length" class="mt-2 max-h-36 space-y-1 overflow-y-auto rounded bg-zinc-950 p-2">
@@ -396,6 +410,7 @@
                     downloadName: 'media_result.mp4',
                     copiedMediaPath: '',
                     copiedMediaPathTimer: null,
+                    xCookies: { configured: false },
                     downloadPeriods: [
                         { value: 'today', label: '오늘' },
                         { value: 'month', label: '한 달' },
@@ -571,6 +586,38 @@
                         if (res.ok) this.mediaAi = await res.json();
                     } catch (e) {
                         this.mediaAi.available = false;
+                    }
+                },
+                async fetchXCookiesStatus() {
+                    try {
+                        const res = await fetch('/api/x-cookies');
+                        if (res.ok) this.xCookies = await res.json();
+                    } catch (e) {
+                        this.xCookies = { configured: false };
+                    }
+                },
+                async uploadXCookies(event) {
+                    const file = event.target.files[0];
+                    event.target.value = '';
+                    if (!file) return;
+                    try {
+                        const form = new FormData();
+                        form.append('file', file);
+                        const res = await fetch('/api/x-cookies', { method: 'POST', body: form });
+                        const body = await res.json().catch(() => null);
+                        if (!res.ok) throw new Error(body?.detail || `X 쿠키 업로드 실패 (${res.status})`);
+                        await this.fetchXCookiesStatus();
+                    } catch (e) {
+                        this.error = e.message || String(e);
+                    }
+                },
+                async deleteXCookies() {
+                    if (!confirm('서버 공용 X/Twitter cookies.txt를 삭제할까요?')) return;
+                    try {
+                        const res = await fetch('/api/x-cookies', { method: 'DELETE' });
+                        if (res.ok) this.xCookies = await res.json();
+                    } catch (e) {
+                        this.error = e.message || String(e);
                     }
                 },
                 loadMediaMetadata(item) {
@@ -883,6 +930,7 @@
             mounted() {
                 this.fetchFfmpegStatus();
                 this.fetchMediaAiStatus();
+                this.fetchXCookiesStatus();
             },
             beforeUnmount() {
                 this.mediaDownload.processing = false;

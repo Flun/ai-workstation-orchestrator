@@ -456,11 +456,35 @@
             </div>
         </section>
 
+        <!-- Service card visibility toggles (서버 저장) -->
+        <section class="bg-zinc-900 border border-zinc-800 rounded-xl p-4 sm:p-5">
+            <div class="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                    <h3 class="text-sm font-semibold text-zinc-200">서비스 카드 표시 설정</h3>
+                    <p class="text-[10px] text-zinc-500 mt-0.5">켜진 서비스만 아래에 카드로 표시됩니다. 토글 상태는 서버에 저장되어 새로고침 후에도 유지됩니다.</p>
+                </div>
+                <div class="flex gap-2">
+                    <button @click="setAllServiceVisibility(true)" class="rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-1 text-[10px] text-zinc-400 transition hover:bg-zinc-700 hover:text-zinc-200">전체 켜기</button>
+                    <button @click="setAllServiceVisibility(false)" class="rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-1 text-[10px] text-zinc-400 transition hover:bg-zinc-700 hover:text-zinc-200">전체 끄기</button>
+                </div>
+            </div>
+            <div class="mt-3 flex flex-wrap gap-2">
+                <button v-for="item in serviceVisibilityEntries" :key="item.key" @click="toggleServiceVisibility(item.key)" :disabled="serviceVisibilityBusy[item.key]" :aria-pressed="serviceVisible(item.key)" :title="serviceVisible(item.key) ? '카드 숨기기' : '카드 표시'" class="flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition disabled:opacity-50" :class="serviceVisible(item.key) ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:border-emerald-500/50' : 'border-zinc-800 bg-zinc-950/50 text-zinc-500 hover:border-zinc-700'">
+                    <span class="flex h-4 w-7 items-center rounded-full p-0.5 transition" :class="serviceVisible(item.key) ? 'bg-emerald-500/70 justify-end' : 'bg-zinc-700 justify-start'">
+                        <span class="h-3 w-3 rounded-full bg-white shadow"></span>
+                    </span>
+                    <span>{{ item.label }}</span>
+                </button>
+            </div>
+        </section>
+
         <!-- Services (Cards) -->
         <section class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-            
+
+            <div v-if="serviceVisibilityLoaded && !anyServiceVisible" class="col-span-full rounded-xl border border-dashed border-zinc-800 bg-zinc-900/40 py-10 text-center text-xs text-zinc-500">표시 중인 서비스 카드가 없습니다. 위 토글에서 서비스를 켜세요.</div>
+
             <!-- Telegram Bot -->
-            <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition">
+            <div v-if="serviceVisible('bot')" class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition">
                 <div class="flex justify-between items-start mb-4">
                     <div>
                         <h3 class="text-base font-semibold text-zinc-100">Telegram Bot</h3>
@@ -483,7 +507,7 @@
             </div>
 
             <!-- Local Watcher -->
-            <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition">
+            <div v-if="serviceVisible('watcher')" class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition">
                 <div class="flex justify-between items-start mb-4">
                     <div>
                         <h3 class="text-base font-semibold text-zinc-100">Local Watcher</h3>
@@ -512,9 +536,9 @@
             </div>
 
             <!-- Unsloth Studio -->
-            <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition">
+            <div v-if="serviceVisible('unsloth')" class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition">
                 <div class="flex justify-between items-start mb-4">
-                    <div><h3 class="text-base font-semibold text-zinc-100">Unsloth Studio</h3><p class="text-xs text-zinc-500 mt-1">Headless Web · {{servicePorts.unsloth}}</p></div>
+                    <div><h3 class="text-base font-semibold text-zinc-100">Unsloth Studio</h3><p class="text-xs text-zinc-500 mt-1">Headless Web</p></div>
                     <div class="flex items-center gap-2">
                         <span class="flex h-2 w-2 relative"><span v-if="status.unsloth" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span><span class="relative inline-flex rounded-full h-2 w-2" :class="status.unsloth ? 'bg-emerald-500' : 'bg-zinc-600'"></span></span>
                         <button @click="forceKill('unsloth')" :disabled="!status.unsloth" class="text-[10px] bg-zinc-800 hover:bg-rose-900/40 hover:text-rose-400 text-zinc-400 px-2 py-0.5 rounded border border-zinc-700 transition disabled:opacity-30" title="Force Kill">Kill</button>
@@ -522,20 +546,58 @@
                 </div>
                 <p class="mb-4 text-[11px] leading-relaxed" :class="unslothAvailable ? 'text-emerald-400/80' : 'text-amber-400'">{{unslothAvailable ? 'CLI 부팅에서도 GUI 없이 웹서버로 실행됩니다.' : 'Unsloth CLI 실행 파일을 찾지 못했습니다.'}}</p>
                 <div class="mt-auto space-y-2">
+                    <label class="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2">
+                        <span class="text-[11px] text-zinc-400">Service port</span>
+                        <span class="flex items-center gap-1 font-mono text-xs text-zinc-500">
+                            :
+                            <input type="number" min="1" max="65535" step="1" v-model.number="unslothPortDraft" @focus="unslothPortEditing = true" @change="saveUnslothPort" @blur="unslothPortEditing = false" @keydown.enter.prevent="$event.target.blur()" :disabled="status.unsloth || unslothPortSaving" aria-label="Unsloth service port" class="w-20 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-right text-zinc-200 outline-none focus:border-lime-500 disabled:cursor-not-allowed disabled:opacity-50">
+                        </span>
+                    </label>
                     <button v-if="!status.unsloth" @click="controlServer('unsloth','start')" :disabled="loading.unsloth || !unslothAvailable" class="w-full py-2.5 rounded-lg font-medium text-sm bg-zinc-100 text-zinc-900 hover:bg-white disabled:opacity-50 transition">Start Service</button>
                     <button v-else @click="controlServer('unsloth','stop')" :disabled="loading.unsloth" class="w-full py-2.5 rounded-lg font-medium text-sm border border-zinc-700 bg-zinc-800 text-zinc-300 hover:bg-zinc-700 disabled:opacity-50 transition">Stop Service</button>
                     <div class="flex gap-2"><a :href="serviceUrl(servicePorts.unsloth)" target="_blank" rel="noopener noreferrer" class="flex-1 flex justify-center items-center py-2 rounded-lg text-xs font-medium border border-zinc-800 bg-zinc-800/50 text-lime-300 hover:bg-zinc-800 hover:border-zinc-700 transition">Web UI</a><button @click="openLogModal('unsloth')" class="flex-1 py-2 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 transition">Log</button><button @click="openFolder('unsloth')" class="px-3 py-2 rounded-lg text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 transition" title="Open Folder"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg></button></div>
                 </div>
             </div>
 
+            <!-- Coding agent services -->
+            <div v-for="agent in visibleAgentDefs" :key="agent.key" class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition">
+                <div class="flex justify-between items-start mb-4">
+                    <div>
+                        <h3 class="text-base font-semibold text-zinc-100">{{ agent.label }}</h3>
+                        <p class="text-xs text-zinc-500 mt-1">{{ agent.description }}</p>
+                    </div>
+                    <span class="flex h-2 w-2 relative mt-1">
+                        <span v-if="status[agent.key]" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-2 w-2" :class="status[agent.key] ? 'bg-emerald-500' : 'bg-zinc-600'"></span>
+                    </span>
+                </div>
+                <p class="mb-4 text-[11px] leading-relaxed" :class="agentServiceAvailable[agent.key] ? 'text-sky-300/80' : 'text-amber-400'">
+                    {{ agentServiceAvailable[agent.key] ? agent.detail : '실행 파일을 찾지 못했습니다.' }}
+                </p>
+                <div class="mt-auto space-y-2">
+                    <label class="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2">
+                        <span class="text-[11px] text-zinc-400">Service port</span>
+                        <span class="flex items-center gap-1 font-mono text-xs text-zinc-500">:
+                            <input type="number" min="1" max="65535" step="1" v-model.number="agentPortDrafts[agent.key]" @focus="agentPortEditing[agent.key] = true" @change="saveAgentServicePort(agent.key)" @blur="agentPortEditing[agent.key] = false" @keydown.enter.prevent="$event.target.blur()" :disabled="status[agent.key] || agentPortSaving[agent.key]" :aria-label="`${agent.label} service port`" class="w-20 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-right text-zinc-200 outline-none focus:border-sky-500 disabled:cursor-not-allowed disabled:opacity-50">
+                        </span>
+                    </label>
+                    <button v-if="!status[agent.key]" @click="controlAgentService(agent.key, 'start')" :disabled="loading[agent.key] || !agentServiceAvailable[agent.key]" class="w-full py-2.5 rounded-lg font-medium text-sm bg-zinc-100 text-zinc-900 hover:bg-white disabled:opacity-50 transition">{{ loading[agent.key] ? 'Starting…' : 'Start Service' }}</button>
+                    <button v-else @click="controlAgentService(agent.key, 'stop')" :disabled="loading[agent.key]" class="w-full py-2.5 rounded-lg font-medium text-sm border border-zinc-700 bg-zinc-800 text-zinc-300 hover:bg-zinc-700 disabled:opacity-50 transition">Stop Service</button>
+                    <div class="flex gap-2">
+                        <a v-if="agent.web" :href="agentServiceUrl(agent)" target="_blank" rel="noopener noreferrer" class="flex-1 flex justify-center items-center py-2 rounded-lg text-xs font-medium border border-zinc-800 bg-zinc-800/50 text-sky-300 hover:bg-zinc-800 hover:border-zinc-700 transition">Web UI</a>
+                        <span v-else class="flex-1 flex justify-center items-center py-2 rounded-lg text-[10px] font-mono border border-zinc-800 bg-zinc-950/50 text-zinc-500">127.0.0.1:{{ servicePorts[agent.key] }}</span>
+                        <button @click="openLogModal(agent.key)" class="flex-1 py-2 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 transition">Log</button>
+                    </div>
+                </div>
+            </div>
+
             <!-- DeepSeek Harness -->
-            <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition relative overflow-hidden">
+            <div v-if="serviceVisible('deepseek_harness')" class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition relative overflow-hidden">
                 <div v-if="status.deepseek_harness" class="absolute top-0 right-0 bg-cyan-500/10 border-b border-l border-cyan-500/20 text-cyan-300 text-[10px] font-semibold px-2 py-1 rounded-bl-lg">TAILSCALE</div>
                 <div class="flex justify-between items-start mb-4">
                     <div>
                         <div class="flex items-center gap-2">
-                            <h3 class="text-base font-semibold text-zinc-100">DeepSeek Harness</h3>
-                            <span class="rounded border border-zinc-700 px-1.5 py-0.5 font-mono text-[9px] text-zinc-500">:{{ servicePorts.deepseekHarness }}</span>
+                            <h3 class="text-base font-semibold text-zinc-100">DSH</h3>
                         </div>
                         <p class="text-xs text-zinc-500 mt-1">Local-first coding agent Web UI</p>
                     </div>
@@ -551,6 +613,12 @@
                     {{ deepseekHarnessInstallMessage || (deepseekHarnessAvailable ? '127.0.0.1 전용 · Start 시 Tailscale Serve 자동 연결' : 'Start 시 Node.js와 dsh를 자동 설치합니다.') }}
                 </p>
                 <div class="mt-auto space-y-2">
+                    <label class="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2">
+                        <span class="text-[11px] text-zinc-400">Service port</span>
+                        <span class="flex items-center gap-1 font-mono text-xs text-zinc-500">:
+                            <input type="number" min="1" max="65535" step="1" v-model.number="agentPortDrafts.dsh" @focus="agentPortEditing.dsh = true" @change="saveAgentServicePort('dsh')" @blur="agentPortEditing.dsh = false" @keydown.enter.prevent="$event.target.blur()" :disabled="status.deepseek_harness || agentPortSaving.dsh" aria-label="DSH service port" class="w-20 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-right text-zinc-200 outline-none focus:border-cyan-500 disabled:cursor-not-allowed disabled:opacity-50">
+                        </span>
+                    </label>
                     <button v-if="!status.deepseek_harness" @click="controlServer('deepseek_harness','start')" :disabled="loading.deepseek_harness" class="w-full py-2.5 rounded-lg font-medium text-sm bg-zinc-100 text-zinc-900 hover:bg-white disabled:opacity-50 transition">{{ loading.deepseek_harness ? 'Preparing & Starting…' : 'Start Service' }}</button>
                     <button v-else @click="controlServer('deepseek_harness','stop')" :disabled="loading.deepseek_harness" class="w-full py-2.5 rounded-lg font-medium text-sm border border-zinc-700 bg-zinc-800 text-zinc-300 hover:bg-zinc-700 disabled:opacity-50 transition">Stop Service</button>
                     <div class="flex gap-2">
@@ -566,7 +634,7 @@
 
             <!-- ComfyUI -->
             <!-- ComfyUI -->
-            <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition relative overflow-hidden">
+            <div v-if="serviceVisible('comfyui')" class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition relative overflow-hidden">
                 <div v-if="status.comfyui || status.comfyui_gpu1" class="absolute top-0 right-0 bg-indigo-500/10 border-b border-l border-indigo-500/20 text-indigo-400 text-[10px] font-semibold px-2 py-1 rounded-bl-lg">VRAM Active</div>
                 <div class="flex justify-between items-start mb-4">
                     <div class="flex items-center gap-2">
@@ -624,7 +692,7 @@
             </div>
 
             <!-- Llama.cpp -->
-            <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition relative overflow-hidden">
+            <div v-if="serviceVisible('llamacpp')" class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition relative overflow-hidden">
                 <div v-if="status.llamacpp" class="absolute top-0 right-0 bg-indigo-500/10 border-b border-l border-indigo-500/20 text-indigo-400 text-[10px] font-semibold px-2 py-1 rounded-bl-lg">VRAM Active</div>
                 <div class="flex justify-between items-start mb-4">
                     <div>
@@ -1395,13 +1463,13 @@
                         gpu_temp: null, gpu_hotspot: null, gpu_fan: null, gpu_power: null,
                         lhm_available: false
                     },
-                    status: { comfyui: false, comfyui_gpu1: false, llamacpp: false, vllm: false, telegram_bot: false, watcher: false, unsloth: false, deepseek_harness: false, initialization: {ready:false, message:'백그라운드 초기화 대기 중'} },
+                    status: { comfyui: false, comfyui_gpu1: false, llamacpp: false, vllm: false, telegram_bot: false, watcher: false, unsloth: false, pi: false, pi_web: false, paseo: false, omp: false, omp_web: false, deepseek_harness: false, initialization: {ready:false, message:'백그라운드 초기화 대기 중'} },
                     comfyState: { main: false, gpu1: false },
                     comfyInstances: [
                         { key: 'main', label: 'ComfyUI · 메인(GPU0)', service: 'comfyui', port: 8188 },
                         { key: 'gpu1', label: 'ComfyUI · 보조(GPU1)', service: 'comfyui_gpu1', port: 8189 }
                     ],
-                    loading: { comfyui: false, llamacpp: false, vllm: false, bot: false, watcher: false, unsloth: false, deepseek_harness: false, status: false },
+                    loading: { comfyui: false, llamacpp: false, vllm: false, bot: false, watcher: false, unsloth: false, pi: false, pi_web: false, paseo: false, omp: false, omp_web: false, deepseek_harness: false, status: false },
                     scanData: { versions:[], models:[] },
                     logModal: { show: false, server: '', title: '', content: '', autoScroll: true },
                     logTimer: null, hwTimer: null,
@@ -1418,8 +1486,23 @@
                     expandedGpus: {},
                     gpuTuningExpanded: false, motherboardFansExpanded: false,
                     managerService: { enabled: false },
-                    servicePorts: { comfyui: 8188, llama: 8080, vllm: 8000, unsloth: 8890, deepseekHarness: 3080 },
+                    servicePorts: { comfyui: 8188, llama: 8080, vllm: 8000, unsloth: 8890, pi: 30174, pi_web: 8504, paseo: 6767, omp: 30176, omp_web: 30177, deepseekHarness: 3080 },
+                    // 서비스 카드 표시/숨김 상태 — 서버의 service_visibility.json이 정답.
+                    serviceVisibility: {}, serviceVisibilityLoaded: false, serviceVisibilityBusy: {},
                     unslothAvailable: false,
+                    unslothPortDraft: 8890, unslothPortEditing: false, unslothPortSaving: false,
+                    agentServiceDefs: [
+                        { key:'pi', label:'PI', description:'JSONL RPC backend', detail:'로컬 TCP에서 PI RPC 요청을 기다립니다.', web:false },
+                        { key:'pi_web', label:'PI Web', description:'PI browser workspace', detail:'기존 systemd 사용자 서비스를 관리합니다.', web:true },
+                        { key:'paseo', label:'Paseo', description:'Agent daemon · bundled Web UI', detail:'에이전트와 터미널을 관리하는 Paseo daemon입니다.', web:true },
+                        { key:'omp', label:'OMP', description:'ACP backend', detail:'로컬 TCP에서 OMP ACP 요청을 기다립니다.', web:false },
+                        { key:'omp_web', label:'OMP Web', description:'@kahme247/ompweb', detail:'로컬 서버를 Tailscale HTTPS로 안전하게 연결합니다.', web:true }
+                    ],
+                    agentServiceAvailable: { pi:false, pi_web:false, paseo:false, omp:false, omp_web:false },
+                    agentServiceUrls: { pi_web:'', paseo:'', omp_web:'' },
+                    agentPortDrafts: { pi:30174, pi_web:8504, paseo:6767, omp:30176, omp_web:30177, dsh:3080 },
+                    agentPortEditing: { pi:false, pi_web:false, paseo:false, omp:false, omp_web:false, dsh:false },
+                    agentPortSaving: { pi:false, pi_web:false, paseo:false, omp:false, omp_web:false, dsh:false },
                     deepseekHarnessAvailable: false, deepseekHarnessUrl: '', deepseekHarnessInstallMessage: '',
                     autoStart: { autostart: false, autostart_llama: false, autostart_comfyui: false, autostart_comfyui_gpu1: false, autostart_bot: false, autostart_watcher: false, autostart_vllm: false, autostart_unsloth: false, autostart_deepseek_harness: false, gpu_tuning_enabled: true },
                     autoStartDefs: [
@@ -1480,6 +1563,24 @@
                 };
             },
             computed: {
+                // 토글 박스에 표시할 항목: 고정 카드 + coding agent + 나머지 카드 순서.
+                serviceVisibilityEntries() {
+                    return [
+                        { key: 'bot', label: 'Telegram Bot' },
+                        { key: 'watcher', label: 'Local Watcher' },
+                        { key: 'unsloth', label: 'Unsloth Studio' },
+                        ...this.agentServiceDefs.map(agent => ({ key: agent.key, label: agent.label })),
+                        { key: 'deepseek_harness', label: 'DSH' },
+                        { key: 'comfyui', label: 'ComfyUI' },
+                        { key: 'llamacpp', label: 'Llama.cpp' },
+                    ];
+                },
+                anyServiceVisible() {
+                    return this.serviceVisibilityEntries.some(item => this.serviceVisible(item.key));
+                },
+                visibleAgentDefs() {
+                    return this.agentServiceDefs.filter(agent => this.serviceVisible(agent.key));
+                },
                 activeTermTab() {
                     const tab = this.terminal.tabs.find(t => t.id === this.terminal.activeTab);
                     return (tab && tab.kind === 'term') ? tab : null;
@@ -1538,6 +1639,9 @@
                     const rawHost = window.location.hostname;
                     const host = rawHost.includes(':') && !rawHost.startsWith('[') ? `[${rawHost}]` : rawHost;
                     return `${window.location.protocol}//${host}:${Number(port)}`;
+                },
+                agentServiceUrl(agent) {
+                    return this.agentServiceUrls[agent.key] || this.serviceUrl(this.servicePorts[agent.key]);
                 },
                 getDirName(path) {
                     if (!path) return "";
@@ -2229,11 +2333,20 @@
                             telegram_bot: !!(svc.bot && svc.bot.running),
                             watcher: !!(svc.watcher && svc.watcher.running),
                             unsloth: !!(svc.unsloth && svc.unsloth.running),
+                            pi: !!svc.pi?.running,
+                            pi_web: !!svc.pi_web?.running,
+                            paseo: !!svc.paseo?.running,
+                            omp: !!svc.omp?.running,
+                            omp_web: !!svc.omp_web?.running,
                             deepseek_harness: !!(svc.deepseek_harness && svc.deepseek_harness.running),
                             initialization: d.initialization || {ready:true, message:'초기화 완료'}
                         };
                         this.unslothAvailable = !!svc.unsloth?.available;
                         this.deepseekHarnessAvailable = !!svc.deepseek_harness?.available;
+                        for (const agent of this.agentServiceDefs) {
+                            this.agentServiceAvailable[agent.key] = !!svc[agent.key]?.available;
+                            if (agent.web) this.agentServiceUrls[agent.key] = svc[agent.key]?.launch_url || '';
+                        }
                         this.deepseekHarnessUrl = svc.deepseek_harness?.launch_url || '';
                         this.deepseekHarnessInstallMessage = (svc.deepseek_harness?.installing || (svc.deepseek_harness?.running && !svc.deepseek_harness?.ready))
                             ? (svc.deepseek_harness?.install_message || '자동 설치 중…')
@@ -2252,10 +2365,89 @@
                             llama: Number(d.llama_port || runtimeSettings.llama_port) || this.servicePorts.llama,
                             vllm: Number(runtimeSettings.vllm_port) || this.servicePorts.vllm,
                             unsloth: Number(runtimeSettings.unsloth_port) || this.servicePorts.unsloth,
+                            pi: Number(svc.pi?.port || runtimeSettings.pi_port) || this.servicePorts.pi,
+                            pi_web: Number(svc.pi_web?.port || runtimeSettings.pi_web_port) || this.servicePorts.pi_web,
+                            paseo: Number(svc.paseo?.port || runtimeSettings.paseo_port) || this.servicePorts.paseo,
+                            omp: Number(svc.omp?.port || runtimeSettings.omp_port) || this.servicePorts.omp,
+                            omp_web: Number(svc.omp_web?.port || runtimeSettings.omp_web_port) || this.servicePorts.omp_web,
                             deepseekHarness: Number(svc.deepseek_harness?.port || runtimeSettings.deepseek_harness_port) || this.servicePorts.deepseekHarness
                         };
+                        if (!this.unslothPortEditing && !this.unslothPortSaving) {
+                            this.unslothPortDraft = this.servicePorts.unsloth;
+                        }
+                        for (const agent of this.agentServiceDefs) {
+                            if (!this.agentPortEditing[agent.key] && !this.agentPortSaving[agent.key]) {
+                                this.agentPortDrafts[agent.key] = this.servicePorts[agent.key];
+                            }
+                        }
+                        if (!this.agentPortEditing.dsh && !this.agentPortSaving.dsh) {
+                            this.agentPortDrafts.dsh = this.servicePorts.deepseekHarness;
+                        }
                     } catch (e) { }
                     this.loading.status = false;
+                },
+
+                // ---------- 서비스 카드 표시/숨김 (서버 저장) ----------
+                serviceVisible(key) {
+                    // 서버 상태를 아직 못 읽었으면 전원을 켜지 않아 카드 깜빡임을 막습니다.
+                    // 읽기 실패 시에는 전체 표시로 안전하게 동작합니다.
+                    if (!this.serviceVisibilityLoaded) return false;
+                    return this.serviceVisibility[key] !== false;
+                },
+                async fetchServiceVisibility() {
+                    try {
+                        const res = await fetch('/api/service-visibility');
+                        const d = await res.json();
+                        this.serviceVisibility = { ...(d.visibility || {}) };
+                    } catch (e) {
+                        this.serviceVisibility = {};
+                    } finally {
+                        this.serviceVisibilityLoaded = true;
+                    }
+                },
+                async toggleServiceVisibility(key) {
+                    const next = !this.serviceVisible(key);
+                    this.serviceVisibility[key] = next;   // 낙관적 갱신
+                    this.serviceVisibilityBusy[key] = true;
+                    try {
+                        const res = await fetch('/api/service-visibility', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ [key]: next })
+                        });
+                        if (!res.ok) throw new Error('save failed');
+                        const d = await res.json();
+                        if (d.visibility) this.serviceVisibility = { ...this.serviceVisibility, ...d.visibility };
+                    } catch (e) {
+                        this.serviceVisibility[key] = !next;
+                        alert('표시 상태를 서버에 저장하지 못했습니다. 다시 시도해 주세요.');
+                    } finally {
+                        this.serviceVisibilityBusy[key] = false;
+                    }
+                },
+                async setAllServiceVisibility(value) {
+                    const entries = this.serviceVisibilityEntries;
+                    for (const item of entries) {
+                        this.serviceVisibility[item.key] = value;
+                        this.serviceVisibilityBusy[item.key] = true;
+                    }
+                    const payload = {};
+                    for (const item of entries) payload[item.key] = value;
+                    try {
+                        const res = await fetch('/api/service-visibility', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        if (!res.ok) throw new Error('save failed');
+                        const d = await res.json();
+                        if (d.visibility) this.serviceVisibility = { ...this.serviceVisibility, ...d.visibility };
+                    } catch (e) {
+                        alert('표시 상태를 서버에 저장하지 못했습니다. 다시 시도해 주세요.');
+                        await this.fetchServiceVisibility();
+                    } finally {
+                        for (const item of entries) this.serviceVisibilityBusy[item.key] = false;
+                    }
                 },
 
                 comfyServiceName(instance) {
@@ -2352,6 +2544,77 @@
                     }
                 },
 
+                async saveUnslothPort() {
+                    const port = Number(this.unslothPortDraft);
+                    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+                        alert('포트는 1~65535 사이의 정수여야 합니다.');
+                        await this.fetchStatus();
+                        return false;
+                    }
+                    this.unslothPortSaving = true;
+                    try {
+                        const res = await fetch('/api/unsloth/settings', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ port })
+                        });
+                        const data = await res.json().catch(() => ({}));
+                        if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+                        this.servicePorts.unsloth = data.port;
+                        this.unslothPortDraft = data.port;
+                        return true;
+                    } catch (e) {
+                        alert('Unsloth 포트 저장 실패: ' + e.message);
+                        await this.fetchStatus();
+                        return false;
+                    } finally {
+                        this.unslothPortSaving = false;
+                    }
+                },
+
+                async saveAgentServicePort(name) {
+                    const port = Number(this.agentPortDrafts[name]);
+                    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+                        alert('포트는 1~65535 사이의 정수여야 합니다.');
+                        await this.fetchStatus();
+                        return false;
+                    }
+                    this.agentPortSaving[name] = true;
+                    try {
+                        const endpoint = name === 'dsh' ? '/api/deepseek_harness/settings' : `/api/agent-services/${name}/settings`;
+                        const res = await fetch(endpoint, {
+                            method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({port})
+                        });
+                        const data = await res.json().catch(() => ({}));
+                        if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+                        this.agentPortDrafts[name] = data.port;
+                        if (name === 'dsh') this.servicePorts.deepseekHarness = data.port;
+                        else this.servicePorts[name] = data.port;
+                        return true;
+                    } catch (e) {
+                        alert('포트 저장 실패: ' + e.message);
+                        await this.fetchStatus();
+                        return false;
+                    } finally {
+                        this.agentPortSaving[name] = false;
+                    }
+                },
+
+                async controlAgentService(name, action) {
+                    if (action === 'start' && !(await this.saveAgentServicePort(name))) return;
+                    this.loading[name] = true;
+                    try {
+                        const res = await fetch(`/api/agent-services/${name}/${action}`, {method:'POST'});
+                        const data = await res.json().catch(() => ({}));
+                        if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+                        await this.fetchStatus();
+                    } catch (e) {
+                        alert(`${name} 서비스 ${action === 'start' ? '시작' : '종료'} 실패: ` + e.message);
+                    } finally {
+                        this.loading[name] = false;
+                    }
+                },
+
                 async forceKill(server) {
                     const serverNames = { 'bot': 'Telegram Bot', 'watcher': 'Local Watcher', 'comfyui': 'ComfyUI(메인)', 'comfyui_gpu1': 'ComfyUI(보조 GPU1)', 'llamacpp': 'Llama.cpp', 'unsloth': 'Unsloth Studio', 'deepseek_harness': 'DeepSeek Harness' };
                     const serverName = serverNames[server] || server;
@@ -2411,7 +2674,7 @@
                 },
 
                 openLogModal(server) {
-                    const titles = { 'bot': 'Telegram Bot', 'watcher': 'Local Watcher', 'comfyui': 'ComfyUI(메인)', 'comfyui_gpu1': 'ComfyUI(보조 GPU1)', 'llamacpp': 'Llama.cpp', 'unsloth': 'Unsloth Studio', 'deepseek_harness': 'DeepSeek Harness' };
+                    const titles = { 'bot': 'Telegram Bot', 'watcher': 'Local Watcher', 'comfyui': 'ComfyUI(메인)', 'comfyui_gpu1': 'ComfyUI(보조 GPU1)', 'llamacpp': 'Llama.cpp', 'unsloth': 'Unsloth Studio', 'pi': 'PI RPC', 'pi_web': 'PI Web', 'paseo': 'Paseo', 'omp': 'OMP ACP', 'omp_web': 'OMP Web', 'deepseek_harness': 'DSH' };
                     this.logModal.server = server;
                     this.logModal.title = titles[server];
                     this.logModal.show = true;
@@ -2971,6 +3234,8 @@
                     if (server === 'unsloth' && action === 'stop' && !confirm('Unsloth Studio를 종료하시겠습니까? 진행 중인 학습·추론 작업이 중단될 수 있습니다.')) return;
                     if (server === 'deepseek_harness' && action === 'stop' && !confirm('DeepSeek Harness를 종료하시겠습니까? 실행 중인 에이전트 작업이 중단될 수 있습니다.')) return;
                     if (server === 'comfyui' && action === 'start' && !(await this.saveComfySettings(instKey))) return;
+                    if (server === 'unsloth' && action === 'start' && !(await this.saveUnslothPort())) return;
+                    if (server === 'deepseek_harness' && action === 'start' && !(await this.saveAgentServicePort('dsh'))) return;
                     this.loading[server] = true;
                     try {
                         const fetchOptions = { method: 'POST' };
@@ -3283,6 +3548,7 @@
                 }
             },
             async mounted() {
+                await this.fetchServiceVisibility();
                 await this.loadPresetsFromServer();
                 await this.loadLastRun();
                 await this.loadLlamaSettings();

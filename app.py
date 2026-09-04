@@ -61,6 +61,7 @@ NO_WINDOW = subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0
 
 PRESETS_FILE = os.path.join(BASE_DIR, "presets.json")
 MEMO_FILE = os.path.join(BASE_DIR, "memo.txt")
+SERVICE_VISIBILITY_FILE = os.path.join(BASE_DIR, "service_visibility.json")
 COMYFUI_SETTINGS_FILE = os.path.join(BASE_DIR, "comfyui_settings.json")
 HW_HISTORY_FILE = os.path.join(BASE_DIR, "hw_history.json")
 GPU_THERMAL_EVENTS_FILE = os.path.join(BASE_DIR, "gpu_thermal_events.json")
@@ -85,6 +86,11 @@ services = {
     "watcher": Service("watcher"),
     "vllm": vllm_service,
     "unsloth": Service("unsloth"),
+    "pi": Service("pi"),
+    "pi_web": Service("pi_web"),
+    "paseo": Service("paseo"),
+    "omp": Service("omp"),
+    "omp_web": Service("omp_web"),
     "deepseek_harness": Service("deepseek_harness"),
 }
 
@@ -980,7 +986,25 @@ def _unsloth_executable():
             os.path.join(os.path.expanduser("~"), ".local", "bin", "unsloth.exe"),
             shutil.which("unsloth.exe"),
         ]
-    return next((path for path in candidates if path and os.path.isfile(path)), None)
+    for path in candidates:
+        if not path or not os.path.isfile(path):
+            continue
+        # POSIX console scripts can remain on disk after the Python runtime that
+        # appears in their shebang has been removed.  Treat that state as
+        # unavailable instead of letting the dashboard offer a Start button that
+        # can only fail with ENOENT.
+        if not IS_WINDOWS:
+            try:
+                with open(path, "rb") as launcher:
+                    first_line = launcher.readline(4096).decode("utf-8", errors="replace").strip()
+                if first_line.startswith("#!"):
+                    interpreter = first_line[2:].strip().split()[0]
+                    if interpreter.startswith("/") and not os.path.isfile(interpreter):
+                        continue
+            except OSError:
+                continue
+        return path
+    return None
 
 
 def _unsloth_port():
@@ -991,6 +1015,102 @@ def _unsloth_port():
     if not 1 <= port <= 65535:
         raise HTTPException(400, "Unsloth 포트 범위는 1~65535입니다")
     return port
+
+
+AGENT_SERVICE_PORT_KEYS = {
+    "pi": "pi_port",
+    "pi_web": "pi_web_port",
+    "paseo": "paseo_port",
+    "omp": "omp_port",
+    "omp_web": "omp_web_port",
+    "dsh": "deepseek_harness_port",
+}
+AGENT_SERVICE_DEFAULT_PORTS = {
+    "pi": 30174,
+    "pi_web": 8504,
+    "paseo": 6767,
+    "omp": 30176,
+    "omp_web": 30177,
+    "dsh": 3080,
+}
+
+
+def _agent_service_port(name):
+    if name not in AGENT_SERVICE_PORT_KEYS:
+        raise HTTPException(404, f"알 수 없는 에이전트 서비스: {name}")
+    raw_port = settings.get(AGENT_SERVICE_PORT_KEYS[name]) or AGENT_SERVICE_DEFAULT_PORTS[name]
+    try:
+        port = int(raw_port)
+    except (TypeError, ValueError) as error:
+        raise HTTPException(400, f"{name} 포트가 올바르지 않습니다") from error
+    if not 1 <= port <= 65535:
+        raise HTTPException(400, f"{name} 포트 범위는 1~65535입니다")
+    return port
+
+
+def _agent_runtime_bin_dir():
+    roots = sorted(
+        glob.glob(os.path.expanduser("~/.local/share/main-server/deepseek-harness/runtime/node-*/bin")),
+        reverse=True,
+    )
+    return roots[0] if roots else ""
+
+
+def _agent_tool_executable(name):
+    runtime_bin = _agent_runtime_bin_dir()
+    candidates = [
+        shutil.which(name),
+        os.path.expanduser(f"~/.local/bin/{name}"),
+        os.path.join(runtime_bin, name) if runtime_bin else "",
+    ]
+    if IS_WINDOWS:
+        candidates += [shutil.which(f"{name}.cmd"), shutil.which(f"{name}.exe")]
+    return next((path for path in candidates if path and os.path.isfile(path)), None)
+
+
+def _agent_service_env():
+    runtime_bin = _agent_runtime_bin_dir()
+    path = os.environ.get("PATH", "")
+    return {"PATH": os.pathsep.join(part for part in (runtime_bin, os.path.expanduser("~/.local/bin"), path) if part)}
+
+
+def _systemd_user_active(unit):
+    if IS_WINDOWS:
+        return False
+    return subprocess.run(
+        ["systemctl", "--user", "is-active", "--quiet", unit],
+        capture_output=True,
+    ).returncode == 0
+
+
+def _pi_web_config_path():
+    configured = os.environ.get("PI_WEB_CONFIG", "").strip()
+    return os.path.expanduser(configured or "~/.config/pi-web/config.json")
+
+
+def _save_pi_web_port(port):
+    path = _pi_web_config_path()
+    data = _read_json(path, {})
+    if not isinstance(data, dict):
+        data = {}
+    data.update({"host": data.get("host") or "0.0.0.0", "port": port})
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    _write_json(path, data)
+
+
+def _agent_service_available(name):
+    command = {
+        "pi": "pi",
+        "pi_web": "pi-web",
+        "paseo": "paseo",
+        "omp": "omp",
+        "omp_web": "ompweb",
+    }.get(name)
+    return bool(command and _agent_tool_executable(command))
+
+
+def _agent_service_name(name):
+    return "deepseek_harness" if name == "dsh" else name
 
 
 def _deepseek_harness_executable():
@@ -1169,10 +1289,10 @@ def _tailscale_serve_url(port):
         payload = json.loads(result.stdout)
     except json.JSONDecodeError:
         return ""
-    target = f"localhost:{port}"
+    targets = {f"localhost:{port}", f"127.0.0.1:{port}"}
     for authority, site in (payload.get("Web") or {}).items():
         for handler in (site.get("Handlers") or {}).values():
-            if str(handler.get("Proxy") or "").removeprefix("http://") == target:
+            if str(handler.get("Proxy") or "").removeprefix("http://") in targets:
                 return f"https://{authority.removesuffix(':443')}/"
     return ""
 
@@ -1212,6 +1332,28 @@ def _ensure_deepseek_harness_tailscale(port):
         raise RuntimeError(f"Tailscale HTTPS 준비 시간 초과: {last_error}")
     _deepseek_harness_tailscale_url_cache = url
     return url
+
+
+def _ensure_agent_tailscale(port):
+    executable = shutil.which("tailscale")
+    if not executable:
+        return ""
+    result = subprocess.run(
+        [executable, "serve", "--bg", "--yes", f"--https={port}", f"http://127.0.0.1:{port}"],
+        capture_output=True, text=True, timeout=20, creationflags=NO_WINDOW,
+    )
+    if result.returncode:
+        raise RuntimeError((result.stderr or result.stdout or "Tailscale Serve 연결 실패").strip())
+    return _tailscale_serve_url(port)
+
+
+def _clear_agent_tailscale(port):
+    executable = shutil.which("tailscale")
+    if executable:
+        subprocess.run(
+            [executable, "serve", "--yes", f"--https={port}", "off"],
+            capture_output=True, text=True, timeout=15, creationflags=NO_WINDOW,
+        )
 
 
 def _deepseek_harness_launch_url():
@@ -1650,6 +1792,30 @@ def _service_state(name):
                 st["running"] = True
                 st["pid"] = pids[0]
                 st["external"] = True
+    if name in ("pi", "pi_web", "paseo", "omp", "omp_web"):
+        st["available"] = _agent_service_available(name)
+        st["port"] = _agent_service_port(name)
+        if name == "pi_web" and _systemd_user_active("pi-web.service"):
+            st["running"] = True
+            st["external"] = True
+            try:
+                output = subprocess.run(
+                    ["systemctl", "--user", "show", "pi-web.service", "-p", "MainPID", "--value"],
+                    capture_output=True, text=True, timeout=2,
+                ).stdout.strip()
+                st["pid"] = int(output) if output else None
+            except (OSError, ValueError, subprocess.SubprocessError):
+                pass
+        elif name == "paseo" and not st["running"]:
+            pids = find_process(r"(?:^|/)paseo(?:\.js)?\s+.*(?:start|server)|@getpaseo/server")
+            if pids:
+                st.update({"running": True, "pid": pids[0], "external": True})
+        elif name == "omp_web" and not st["running"]:
+            pids = find_process(r"(?:ompweb|omp-web).*?(?:next\s+start|--port|30177)")
+            if pids:
+                st.update({"running": True, "pid": pids[0], "external": True})
+        if name == "omp_web":
+            st["launch_url"] = _tailscale_serve_url(st["port"]) if st["running"] else ""
     if name == "deepseek_harness":
         global _deepseek_harness_tailscale_url_cache
         executable = _deepseek_harness_executable()
@@ -2917,6 +3083,144 @@ def unsloth_start():
     return {"ok": True, "pid": pid, "port": port, "headless": True, "starting": True}
 
 
+@app.post("/api/unsloth/settings")
+def unsloth_settings_save(data: dict):
+    if services["unsloth"].running():
+        raise HTTPException(409, "실행 중에는 Unsloth 포트를 변경할 수 없습니다")
+    raw_port = data.get("port")
+    if isinstance(raw_port, bool) or (isinstance(raw_port, float) and not raw_port.is_integer()):
+        raise HTTPException(400, "Unsloth 포트가 올바르지 않습니다")
+    try:
+        port = int(raw_port)
+    except (TypeError, ValueError) as error:
+        raise HTTPException(400, "Unsloth 포트가 올바르지 않습니다") from error
+    if not 1 <= port <= 65535:
+        raise HTTPException(400, "Unsloth 포트 범위는 1~65535입니다")
+    settings.save({"unsloth_port": str(port)})
+    return {"ok": True, "port": port}
+
+
+@app.post("/api/agent-services/{name}/settings")
+def agent_service_settings_save(name: str, data: dict):
+    service_name = _agent_service_name(name)
+    if name not in AGENT_SERVICE_PORT_KEYS or service_name not in services:
+        raise HTTPException(404, f"알 수 없는 에이전트 서비스: {name}")
+    if _service_state(service_name)["running"]:
+        raise HTTPException(409, "실행 중에는 포트를 변경할 수 없습니다")
+    raw_port = data.get("port")
+    if isinstance(raw_port, bool) or (isinstance(raw_port, float) and not raw_port.is_integer()):
+        raise HTTPException(400, "포트가 올바르지 않습니다")
+    try:
+        port = int(raw_port)
+    except (TypeError, ValueError) as error:
+        raise HTTPException(400, "포트가 올바르지 않습니다") from error
+    if not 1 <= port <= 65535:
+        raise HTTPException(400, "포트 범위는 1~65535입니다")
+    settings.save({AGENT_SERVICE_PORT_KEYS[name]: str(port)})
+    if name == "pi_web":
+        _save_pi_web_port(port)
+    return {"ok": True, "port": port}
+
+
+def _append_service_log(name, output):
+    if not output:
+        return
+    with open(services[name].log_file, "a", encoding="utf-8", errors="replace") as handle:
+        handle.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} =====\n{output.rstrip()}\n")
+
+
+@app.post("/api/agent-services/{name}/start")
+def agent_service_start(name: str):
+    if name not in AGENT_SERVICE_PORT_KEYS or name == "dsh":
+        raise HTTPException(404, f"알 수 없는 에이전트 서비스: {name}")
+    if _service_state(name)["running"]:
+        return {"ok": True, "already_running": True, "port": _agent_service_port(name)}
+    port = _agent_service_port(name)
+    env = _agent_service_env()
+    executable_name = {"pi": "pi", "pi_web": "pi-web", "paseo": "paseo", "omp": "omp", "omp_web": "ompweb"}[name]
+    executable = _agent_tool_executable(executable_name)
+    if not executable:
+        raise HTTPException(400, f"{executable_name} 실행 파일을 찾지 못했습니다")
+
+    if name == "pi_web":
+        _save_pi_web_port(port)
+        completed = subprocess.run(
+            [executable, "start"], capture_output=True, text=True, timeout=30,
+            env={**os.environ, **env},
+        )
+        _append_service_log(name, (completed.stdout or "") + (completed.stderr or ""))
+        if completed.returncode != 0:
+            raise HTTPException(500, (completed.stderr or completed.stdout or "PI Web 시작 실패").strip())
+        return {"ok": True, "port": port}
+
+    if name in ("pi", "omp"):
+        child = [executable, "--mode", "rpc"] if name == "pi" else [executable, "acp"]
+        command = [
+            sys.executable, os.path.join(BASE_DIR, "stdio_tcp_bridge.py"),
+            "--host", "127.0.0.1", "--port", str(port), "--", *child,
+        ]
+    elif name == "paseo":
+        command = [
+            executable, "start", "--foreground", "--listen", f"0.0.0.0:{port}",
+            "--web-ui", "--no-relay",
+        ]
+    else:
+        command = [
+            executable, "--hostname", "127.0.0.1", "--port", str(port), "--no-open",
+        ]
+        env["OMP_WEB_OMP_BIN"] = _agent_tool_executable("omp") or "omp"
+        env["OMP_WEB_NO_OPEN"] = "1"
+    pid = services[name].start(command, cwd=os.path.expanduser("~"), env=env)
+    time.sleep(0.6)
+    if not services[name].running():
+        detail = "\n".join(tail(services[name].log_file, 30))
+        raise HTTPException(500, detail or f"{name} 서비스가 시작 직후 종료되었습니다")
+    launch_url = ""
+    if name == "omp_web":
+        try:
+            launch_url = _ensure_agent_tailscale(port)
+        except RuntimeError as error:
+            services[name].stop()
+            raise HTTPException(500, f"OMP Web Tailscale 연결 실패: {error}") from error
+    return {"ok": True, "pid": pid, "port": port, "launch_url": launch_url}
+
+
+@app.post("/api/agent-services/{name}/stop")
+def agent_service_stop(name: str):
+    if name not in AGENT_SERVICE_PORT_KEYS or name == "dsh":
+        raise HTTPException(404, f"알 수 없는 에이전트 서비스: {name}")
+    if name == "pi_web":
+        executable = _agent_tool_executable("pi-web")
+        if not executable:
+            raise HTTPException(400, "pi-web 실행 파일을 찾지 못했습니다")
+        completed = subprocess.run(
+            [executable, "stop"], capture_output=True, text=True, timeout=30,
+            env={**os.environ, **_agent_service_env()},
+        )
+        _append_service_log(name, (completed.stdout or "") + (completed.stderr or ""))
+        if completed.returncode != 0:
+            raise HTTPException(500, (completed.stderr or completed.stdout or "PI Web 종료 실패").strip())
+        return {"ok": True}
+    stopped = services[name].stop()
+    if name == "omp_web":
+        _clear_agent_tailscale(_agent_service_port(name))
+    if name == "paseo" and not stopped:
+        executable = _agent_tool_executable("paseo")
+        if executable:
+            completed = subprocess.run(
+                [executable, "daemon", "stop"], capture_output=True, text=True, timeout=15,
+                env={**os.environ, **_agent_service_env()},
+            )
+            _append_service_log(name, (completed.stdout or "") + (completed.stderr or ""))
+            stopped = completed.returncode == 0
+    return {"ok": stopped}
+
+
+@app.post("/api/deepseek_harness/settings")
+def deepseek_harness_settings_save(data: dict):
+    return agent_service_settings_save("dsh", data)
+
+
 @app.post("/api/unsloth/stop")
 def unsloth_stop(request: Request):
     if request.headers.get("X-Unsloth-Stop-Confirm") != "confirmed":
@@ -3005,6 +3309,49 @@ def memo_save(memo: str = ""):
     with open(MEMO_FILE, "w", encoding="utf-8") as f:
         f.write(memo)
     return {"ok": True}
+
+
+# ---------- 서비스 카드 표시 상태 (UI 전용, JSON 영속화) ----------
+
+# 대시보드에서 카드로 노출할 수 있는 서비스 키. 전부 기본값 True(표시)이며,
+# 끄는 상태만 service_visibility.json에 저장합니다. 카드 순서도 이 순서를 따릅니다.
+SERVICE_CARD_KEYS = (
+    "bot", "watcher", "unsloth",
+    "pi", "pi_web", "paseo", "omp", "omp_web",
+    "deepseek_harness", "comfyui", "llamacpp",
+)
+
+
+def _service_visibility_load():
+    state = {key: True for key in SERVICE_CARD_KEYS}
+    try:
+        with open(SERVICE_VISIBILITY_FILE, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+        if isinstance(loaded, dict):
+            for key in SERVICE_CARD_KEYS:
+                if key in loaded:
+                    state[key] = bool(loaded[key])
+    except (FileNotFoundError, OSError, ValueError):
+        pass
+    return state
+
+
+@app.get("/api/service-visibility")
+def service_visibility_get():
+    return {"visibility": _service_visibility_load()}
+
+
+@app.post("/api/service-visibility")
+def service_visibility_save(data: dict):
+    # 부분 저장 허용: 보낸 키만 갱신하고 나머지는 서버 저장값을 유지합니다.
+    state = _service_visibility_load()
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if key in SERVICE_CARD_KEYS:
+                state[key] = bool(value)
+    with open(SERVICE_VISIBILITY_FILE, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
+    return {"ok": True, "visibility": state}
 
 
 @app.get("/api/logs")
@@ -3859,8 +4206,15 @@ def panic(request: Request):
     for name, svc in services.items():
         if name == "deepseek_harness":
             results[name] = _terminate_deepseek_harness_processes(force=True)
+        elif name == "pi_web":
+            try:
+                results[name] = bool(agent_service_stop(name).get("ok"))
+            except HTTPException:
+                results[name] = False
         else:
             results[name] = svc.stop()
+            if name == "omp_web":
+                _clear_agent_tailscale(_agent_service_port(name))
     return {"ok": True, "results": results}
 
 
@@ -3870,11 +4224,14 @@ def force_kill(server: str, request: Request):
         raise HTTPException(404, f"알 수 없는 서비스: {server}")
     if server in ("comfyui", "comfyui_gpu1"):
         _require_comfy_confirmation(request)
-    killed = (
-        _terminate_deepseek_harness_processes(force=True)
-        if server == "deepseek_harness"
-        else services[server].force_kill()
-    )
+    if server == "deepseek_harness":
+        killed = _terminate_deepseek_harness_processes(force=True)
+    elif server == "pi_web":
+        killed = bool(agent_service_stop(server).get("ok"))
+    else:
+        killed = services[server].force_kill()
+        if server == "omp_web":
+            _clear_agent_tailscale(_agent_service_port(server))
     return {"ok": killed}
 
 

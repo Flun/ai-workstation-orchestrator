@@ -239,6 +239,12 @@ def shared_instagram_cookie_path():
     return folder / "instagram_cookies.txt"
 
 
+def shared_x_cookie_path():
+    folder = DATASET_ROOT / "_shared" / "credentials"
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder / "x_cookies.txt"
+
+
 def create_dataset(name, subject_name=""):
     dataset_id = uuid.uuid4().hex
     stamp = now_ts()
