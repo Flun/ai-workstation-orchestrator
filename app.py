@@ -8,6 +8,7 @@ import platform
 import re
 import shlex
 import shutil
+import signal
 import struct
 import subprocess
 import sys
@@ -15,6 +16,7 @@ import tarfile
 import tempfile
 import threading
 import time
+import uuid
 import zipfile
 from pathlib import Path
 
@@ -62,6 +64,7 @@ NO_WINDOW = subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0
 PRESETS_FILE = os.path.join(BASE_DIR, "presets.json")
 MEMO_FILE = os.path.join(BASE_DIR, "memo.txt")
 SERVICE_VISIBILITY_FILE = os.path.join(BASE_DIR, "service_visibility.json")
+VLLM_SLOTS_FILE = os.path.join(BASE_DIR, "vllm_slots.json")
 COMYFUI_SETTINGS_FILE = os.path.join(BASE_DIR, "comfyui_settings.json")
 HW_HISTORY_FILE = os.path.join(BASE_DIR, "hw_history.json")
 GPU_THERMAL_EVENTS_FILE = os.path.join(BASE_DIR, "gpu_thermal_events.json")
@@ -3318,7 +3321,7 @@ def memo_save(memo: str = ""):
 SERVICE_CARD_KEYS = (
     "bot", "watcher", "unsloth",
     "pi", "pi_web", "paseo", "omp", "omp_web",
-    "deepseek_harness", "comfyui", "llamacpp",
+    "deepseek_harness", "comfyui", "llamacpp", "vllm",
 )
 
 
@@ -3352,6 +3355,118 @@ def service_visibility_save(data: dict):
     with open(SERVICE_VISIBILITY_FILE, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
     return {"ok": True, "visibility": state}
+
+
+# ---------- vLLM 슬롯 카드 (완성된 실행 명령어를 슬롯에 저장해 실행) ----------
+
+VLLM_SLOT_LIMIT = 20
+
+
+def _vllm_slots_load():
+    """vllm_slots.json의 슬롯 목록을 [{id,name,command}] 형태로 정규화해 반환."""
+    loaded = _read_json(VLLM_SLOTS_FILE, {})
+    raw = loaded.get("slots") if isinstance(loaded, dict) else None
+    slots = []
+    if isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            command = str(item.get("command") or "").strip()
+            if not command:
+                continue
+            slot_id = str(item.get("id") or "").strip() or uuid.uuid4().hex[:8]
+            name = str(item.get("name") or "").strip() or command.splitlines()[0][:40]
+            slots.append({"id": slot_id, "name": name[:80], "command": command[:8000]})
+    return slots[:VLLM_SLOT_LIMIT]
+
+
+def _vllm_slots_save(slots):
+    with open(VLLM_SLOTS_FILE, "w", encoding="utf-8") as f:
+        json.dump({"slots": slots}, f, ensure_ascii=False, indent=2)
+
+
+@app.get("/api/vllm/slots")
+def vllm_slots_get():
+    return {"slots": _vllm_slots_load()}
+
+
+@app.post("/api/vllm/slots")
+def vllm_slots_save(data: dict):
+    # 프론트가 전체 목록을 보내면 그대로 교체(추가/수정/삭제 모두 이 하나로 처리).
+    incoming = data.get("slots") if isinstance(data, dict) else None
+    if not isinstance(incoming, list):
+        raise HTTPException(400, "slots(목록)가 필요합니다")
+    slots = []
+    seen_ids = set()
+    for item in incoming[:VLLM_SLOT_LIMIT]:
+        if not isinstance(item, dict):
+            continue
+        command = str(item.get("command") or "").strip()
+        if not command:
+            continue  # 빈 명령어 슬롯은 저장하지 않음
+        slot_id = str(item.get("id") or "").strip() or uuid.uuid4().hex[:8]
+        if slot_id in seen_ids:
+            slot_id = uuid.uuid4().hex[:8]
+        seen_ids.add(slot_id)
+        name = str(item.get("name") or "").strip() or command.splitlines()[0][:40]
+        slots.append({"id": slot_id, "name": name[:80], "command": command[:8000]})
+    _vllm_slots_save(slots)
+    return {"ok": True, "slots": slots}
+
+
+@app.post("/api/vllm/slots/run")
+def vllm_slot_run(data: dict):
+    # 슬롯의 완성된 명령어를 vllm Service(로그: logs/vllm.log, pidfile: vllm.pid)로 실행.
+    # bash -lc 래퍼라 사용자가 shell 환경변수/절대경로를 그대로 쓴 명령어를 입력할 수 있습니다.
+    if _service_state("vllm")["running"]:
+        raise HTTPException(409, "vLLM이 이미 실행 중입니다. 먼저 Stop하세요")
+    slot_id = str((data or {}).get("id") or "").strip()
+    slot = next((s for s in _vllm_slots_load() if s["id"] == slot_id), None)
+    if not slot:
+        raise HTTPException(404, "슬롯을 찾지 못했습니다")
+    if IS_WINDOWS:
+        command = ["cmd", "/c", slot["command"]]
+    else:
+        command = ["/bin/bash", "-lc", slot["command"]]
+    # 맨손 PATH에서는 venv의 vllm이 안 잡힐 수 있어 vLLM venv와 ~/.local/bin을 PATH에 ahead.
+    venv_bin = os.path.join(str(settings.get("vllm_env") or ""), "bin")
+    path_parts = [p for p in (venv_bin, os.path.expanduser("~/.local/bin"), os.environ.get("PATH", "")) if p]
+    env = {"PATH": os.pathsep.join(dict.fromkeys(path_parts))}
+    try:
+        pid = services["vllm"].start(command, env=env)
+    except RuntimeError as error:
+        raise HTTPException(409, str(error))
+    time.sleep(0.8)
+    if not services["vllm"].running() and not _service_state("vllm")["running"]:
+        detail = "\n".join(tail(services["vllm"].log_file, 20))
+        raise HTTPException(500, detail or "실행 직후 프로세스가 종료되었습니다. 명령어와 로그를 확인하세요")
+    return {"ok": True, "pid": pid, "slot": {"id": slot["id"], "name": slot["name"]}}
+
+
+def _vllm_stop(force=False):
+    """vLLM 종료. 우리가 pidfile로 관리하는 프로세스 우선, 없으면 외부 감지 프로세스로 폴백.
+
+    외부 vllm serve는 보통 자체 프로세스 그룹으로 뜨므로 그룹에 신호를 보내
+    engine 자식 프로세스까지 함께 내립니다."""
+    svc = services["vllm"]
+    if svc.running():
+        return svc.force_kill() if force else svc.stop()
+    pid = _service_state("vllm").get("pid")
+    if not pid:
+        return False
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGKILL if force else signal.SIGTERM)
+    except (OSError, ProcessLookupError):
+        try:
+            os.kill(pid, signal.SIGKILL if force else signal.SIGTERM)
+        except (OSError, ProcessLookupError):
+            return False
+    return True
+
+
+@app.post("/api/vllm/stop")
+def vllm_slot_stop():
+    return {"ok": _vllm_stop(force=False)}
 
 
 @app.get("/api/logs")
@@ -4211,6 +4326,8 @@ def panic(request: Request):
                 results[name] = bool(agent_service_stop(name).get("ok"))
             except HTTPException:
                 results[name] = False
+        elif name == "vllm":
+            results[name] = _vllm_stop(force=True)
         else:
             results[name] = svc.stop()
             if name == "omp_web":
@@ -4228,6 +4345,9 @@ def force_kill(server: str, request: Request):
         killed = _terminate_deepseek_harness_processes(force=True)
     elif server == "pi_web":
         killed = bool(agent_service_stop(server).get("ok"))
+    elif server == "vllm":
+        # 슬롯 런처로 띄운 경우뿐 아니라 infrastructure/외부에서 뜬 vLLM도 잡도록 폴백.
+        killed = _vllm_stop(force=True)
     else:
         killed = services[server].force_kill()
         if server == "omp_web":

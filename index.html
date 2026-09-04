@@ -717,6 +717,68 @@
                     </div>
                 </div>
             </div>
+
+            <!-- vLLM (슬롯 명령어 런처) -->
+            <div v-if="serviceVisible('vllm')" class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition relative overflow-hidden">
+                <div v-if="status.vllm" class="absolute top-0 right-0 bg-rose-500/10 border-b border-l border-rose-500/20 text-rose-300 text-[10px] font-semibold px-2 py-1 rounded-bl-lg">VRAM Active</div>
+                <div class="flex justify-between items-start mb-4">
+                    <div>
+                        <h3 class="text-base font-semibold text-zinc-100">vLLM</h3>
+                        <p class="text-xs text-zinc-500 mt-1">Slot command launcher</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="flex h-2 w-2 relative">
+                            <span v-if="status.vllm" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                            <span class="relative inline-flex rounded-full h-2 w-2" :class="status.vllm ? 'bg-emerald-500' : 'bg-zinc-600'"></span>
+                        </span>
+                        <button @click="forceKill('vllm')" :disabled="!status.vllm" class="text-[10px] bg-zinc-800 hover:bg-rose-900/40 hover:text-rose-400 text-zinc-400 px-2 py-0.5 rounded border border-zinc-700 transition disabled:opacity-30" title="Force Kill">Kill</button>
+                    </div>
+                </div>
+
+                <!-- 슬롯 관리(편집) -->
+                <div v-if="vllmEditing" class="mb-3 space-y-3 rounded-lg border border-rose-500/30 bg-zinc-950/50 p-3">
+                    <p class="text-[10px] leading-relaxed text-zinc-500">완성된 실행 명령어를 그대로 저장합니다. 실행 시 <span class="font-mono text-zinc-400">bash -lc</span>로 실행되며, vLLM venv와 <span class="font-mono text-zinc-400">~/.local/bin</span>이 PATH에 우선 추가됩니다.</p>
+                    <div v-if="!vllmDraft.length" class="py-1 text-center text-[10px] text-zinc-600">슬롯이 없습니다. 아래 버튼으로 추가하세요.</div>
+                    <div v-for="(slot, index) in vllmDraft" :key="slot.id || ('draft-' + index)" class="space-y-1.5">
+                        <div class="flex items-center gap-2">
+                            <input v-model.trim="slot.name" maxlength="80" placeholder="슬롯 이름" class="input-base w-32 shrink-0 text-xs">
+                            <span class="flex-1"></span>
+                            <button @click="removeVllmSlot(index)" class="shrink-0 px-2 py-1.5 rounded border border-zinc-700 bg-zinc-800 text-zinc-500 transition hover:text-rose-400 hover:border-rose-900/50" title="슬롯 삭제">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                            </button>
+                        </div>
+                        <textarea v-model="slot.command" rows="2" placeholder="예: vllm serve /mnt/main-server-models/model/... --host 0.0.0.0 --port 8000" class="input-base w-full font-mono text-[11px]" spellcheck="false"></textarea>
+                    </div>
+                    <div class="flex items-center justify-between gap-2 pt-1">
+                        <button @click="addVllmSlot()" class="rounded-lg border border-dashed border-zinc-700 px-3 py-1.5 text-[11px] text-zinc-400 transition hover:border-rose-500/40 hover:text-rose-300">+ 슬롯 추가</button>
+                        <div class="flex gap-2">
+                            <button @click="vllmEditing = false" class="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-[11px] text-zinc-400 transition hover:bg-zinc-700">취소</button>
+                            <button @click="saveVllmSlots" :disabled="vllmSlotsSaving" class="rounded-lg bg-rose-600 px-3 py-1.5 text-[11px] font-medium text-white transition hover:bg-rose-500 disabled:opacity-40">{{ vllmSlotsSaving ? '저장 중...' : '슬롯 저장' }}</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 슬롯 목록: 클릭 실행 -->
+                <div v-else class="mb-4 space-y-2">
+                    <div v-if="!vllmSlots.length" class="rounded-lg border border-dashed border-zinc-800 px-3 py-4 text-center text-[11px] text-zinc-600">슬롯이 없습니다. <span class="text-rose-300">슬롯 관리</span>에서 완성된 vLLM 실행 명령어를 추가하세요.</div>
+                    <button v-for="slot in vllmSlots" :key="slot.id" @click="runVllmSlot(slot)" :disabled="status.vllm || vllmRunning" :title="slot.command" class="w-full flex flex-col gap-1 rounded-lg border border-zinc-800 bg-zinc-950/40 p-2.5 text-left transition" :class="status.vllm ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:border-rose-500/40'">
+                        <span class="flex w-full items-center justify-between gap-2">
+                            <span class="truncate text-xs font-medium text-zinc-300">{{ slot.name }}</span>
+                            <span class="shrink-0 text-[9px] font-mono" :class="status.vllm ? 'text-zinc-600' : 'text-rose-300'">{{ vllmRunning ? '실행 중…' : (status.vllm ? '먼저 Stop' : '클릭 실행') }}</span>
+                        </span>
+                        <span class="block truncate font-mono text-[10px] text-zinc-500">{{ slot.command }}</span>
+                    </button>
+                </div>
+
+                <div class="mt-auto space-y-2">
+                    <button v-if="status.vllm" @click="stopVllm" :disabled="vllmStopping" class="w-full py-2.5 rounded-lg font-medium text-sm border border-zinc-700 bg-zinc-800 text-zinc-300 hover:bg-zinc-700 disabled:opacity-50 transition">{{ vllmStopping ? 'Stopping…' : 'Stop Service' }}</button>
+                    <div class="flex gap-2">
+                        <button @click="copyVllmApiUrl" class="flex-1 py-2 rounded-lg text-xs font-medium border border-zinc-800 bg-zinc-800/50 text-rose-300 hover:bg-zinc-800 hover:border-zinc-700 transition" :title="`${serviceUrl(servicePorts.vllm)}/v1`">{{ vllmCopied ? '복사됨 ✓' : `API URL 복사 (:${servicePorts.vllm})` }}</button>
+                        <button @click="openLogModal('vllm')" class="flex-1 py-2 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 transition">Log</button>
+                        <button @click="toggleVllmEditor" class="flex-1 py-2 rounded-lg text-xs font-medium border border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 transition">{{ vllmEditing ? '편집 닫기' : '슬롯 관리' }}</button>
+                    </div>
+                </div>
+            </div>
         </section>
 
         <!-- Llama.cpp Configurator -->
@@ -1489,6 +1551,9 @@
                     servicePorts: { comfyui: 8188, llama: 8080, vllm: 8000, unsloth: 8890, pi: 30174, pi_web: 8504, paseo: 6767, omp: 30176, omp_web: 30177, deepseekHarness: 3080 },
                     // 서비스 카드 표시/숨김 상태 — 서버의 service_visibility.json이 정답.
                     serviceVisibility: {}, serviceVisibilityLoaded: false, serviceVisibilityBusy: {},
+                    // vLLM 슬롯 카드 — 슬롯 목록은 서버의 vllm_slots.json에 저장.
+                    vllmSlots: [], vllmEditing: false, vllmDraft: [], vllmSlotsSaving: false,
+                    vllmRunning: false, vllmStopping: false, vllmCopied: false,
                     unslothAvailable: false,
                     unslothPortDraft: 8890, unslothPortEditing: false, unslothPortSaving: false,
                     agentServiceDefs: [
@@ -1573,6 +1638,7 @@
                         { key: 'deepseek_harness', label: 'DSH' },
                         { key: 'comfyui', label: 'ComfyUI' },
                         { key: 'llamacpp', label: 'Llama.cpp' },
+                        { key: 'vllm', label: 'vLLM' },
                     ];
                 },
                 anyServiceVisible() {
@@ -2450,6 +2516,84 @@
                     }
                 },
 
+                // ---------- vLLM 슬롯 카드 ----------
+                async fetchVllmSlots() {
+                    try {
+                        const res = await fetch('/api/vllm/slots');
+                        const d = await res.json();
+                        this.vllmSlots = Array.isArray(d.slots) ? d.slots : [];
+                    } catch (e) { }
+                },
+                toggleVllmEditor() {
+                    if (!this.vllmEditing) this.vllmDraft = this.vllmSlots.map(slot => ({ ...slot }));
+                    this.vllmEditing = !this.vllmEditing;
+                },
+                addVllmSlot() {
+                    this.vllmDraft.push({ id: '', name: `슬롯 ${this.vllmDraft.length + 1}`, command: '' });
+                },
+                removeVllmSlot(index) {
+                    this.vllmDraft.splice(index, 1);
+                },
+                async saveVllmSlots() {
+                    // 빈 명령어 슬롯은 서버에서도 걸러지지만, 여기선 미리 정리해 보냅니다.
+                    const slots = this.vllmDraft
+                        .filter(slot => (slot.command || '').trim())
+                        .map(slot => ({ id: slot.id || '', name: (slot.name || '').trim(), command: slot.command.trim() }));
+                    this.vllmSlotsSaving = true;
+                    try {
+                        const res = await fetch('/api/vllm/slots', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ slots })
+                        });
+                        const d = await res.json().catch(() => ({}));
+                        if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
+                        this.vllmSlots = Array.isArray(d.slots) ? d.slots : [];
+                        this.vllmEditing = false;
+                    } catch (e) {
+                        alert(`슬롯 저장 실패: ${e.message}`);
+                    }
+                    this.vllmSlotsSaving = false;
+                },
+                async runVllmSlot(slot) {
+                    if (this.status.vllm || this.vllmRunning) return;
+                    this.vllmRunning = true;
+                    try {
+                        const res = await fetch('/api/vllm/slots/run', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ id: slot.id })
+                        });
+                        const d = await res.json().catch(() => ({}));
+                        if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
+                    } catch (e) {
+                        alert(`vLLM 실행 실패: ${e.message}`);
+                    }
+                    this.vllmRunning = false;
+                    await this.fetchStatus();
+                },
+                async stopVllm() {
+                    this.vllmStopping = true;
+                    try {
+                        const res = await fetch('/api/vllm/stop', { method: 'POST' });
+                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    } catch (e) {
+                        alert('vLLM 종료 실패');
+                    }
+                    this.vllmStopping = false;
+                    await this.fetchStatus();
+                },
+                async copyVllmApiUrl() {
+                    const url = `${this.serviceUrl(this.servicePorts.vllm)}/v1`;
+                    try {
+                        await navigator.clipboard.writeText(url);
+                        this.vllmCopied = true;
+                        setTimeout(() => { this.vllmCopied = false; }, 1500);
+                    } catch (e) {
+                        prompt('API URL을 복사하세요:', url);
+                    }
+                },
+
                 comfyServiceName(instance) {
                     return instance === 'gpu1' ? 'comfyui_gpu1' : 'comfyui';
                 },
@@ -2616,7 +2760,7 @@
                 },
 
                 async forceKill(server) {
-                    const serverNames = { 'bot': 'Telegram Bot', 'watcher': 'Local Watcher', 'comfyui': 'ComfyUI(메인)', 'comfyui_gpu1': 'ComfyUI(보조 GPU1)', 'llamacpp': 'Llama.cpp', 'unsloth': 'Unsloth Studio', 'deepseek_harness': 'DeepSeek Harness' };
+                    const serverNames = { 'bot': 'Telegram Bot', 'watcher': 'Local Watcher', 'comfyui': 'ComfyUI(메인)', 'comfyui_gpu1': 'ComfyUI(보조 GPU1)', 'llamacpp': 'Llama.cpp', 'unsloth': 'Unsloth Studio', 'deepseek_harness': 'DeepSeek Harness', 'vllm': 'vLLM' };
                     const serverName = serverNames[server] || server;
                     
                     const warning = server === 'deepseek_harness'
@@ -2674,7 +2818,7 @@
                 },
 
                 openLogModal(server) {
-                    const titles = { 'bot': 'Telegram Bot', 'watcher': 'Local Watcher', 'comfyui': 'ComfyUI(메인)', 'comfyui_gpu1': 'ComfyUI(보조 GPU1)', 'llamacpp': 'Llama.cpp', 'unsloth': 'Unsloth Studio', 'pi': 'PI RPC', 'pi_web': 'PI Web', 'paseo': 'Paseo', 'omp': 'OMP ACP', 'omp_web': 'OMP Web', 'deepseek_harness': 'DSH' };
+                    const titles = { 'bot': 'Telegram Bot', 'watcher': 'Local Watcher', 'comfyui': 'ComfyUI(메인)', 'comfyui_gpu1': 'ComfyUI(보조 GPU1)', 'llamacpp': 'Llama.cpp', 'unsloth': 'Unsloth Studio', 'pi': 'PI RPC', 'pi_web': 'PI Web', 'paseo': 'Paseo', 'omp': 'OMP ACP', 'omp_web': 'OMP Web', 'deepseek_harness': 'DSH', 'vllm': 'vLLM' };
                     this.logModal.server = server;
                     this.logModal.title = titles[server];
                     this.logModal.show = true;
@@ -3549,6 +3693,7 @@
             },
             async mounted() {
                 await this.fetchServiceVisibility();
+                await this.fetchVllmSlots();
                 await this.loadPresetsFromServer();
                 await this.loadLastRun();
                 await this.loadLlamaSettings();
