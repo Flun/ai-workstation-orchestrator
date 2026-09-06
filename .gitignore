@@ -15,6 +15,7 @@ last_run.json
 memo.txt
 comfyui_settings.json
 service_visibility.json
+service_layout.json
 vllm_slots.json
 llama_settings.json
 llama_windows_settings.json

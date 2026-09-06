@@ -81,6 +81,8 @@
                     autoScroll: true,
                     paused: false,
                     timer: null,
+                    shownLines: 0,
+                    pending: 0,
                     history: { open: false, term: null, loading: false, lines: 0, fetchedAt: '' },
                 },
                 memo: {
@@ -106,6 +108,9 @@
             openTerminalPanel() {
                 this.terminal.show = true;
                 this.terminal.paused = false;
+                this.terminal.autoScroll = true;
+                this.terminal.shownLines = 0;
+                this.terminal.pending = 0;
                 this.fetchLogs();
                 this.startPolling();
                 this.refreshSessions().then(() => {
@@ -152,16 +157,36 @@
                     const res = await fetch('/api/terminal/main?lines=400&t=' + Date.now());
                     if (!res.ok) return;
                     const data = await res.json();
-                    this.terminal.lines = (data.lines || []).map(l =>
+                    const lines = (data.lines || []).map(l =>
                         (typeof l === 'string') ? { t: '', s: l } : { t: l.t || '', s: l.s || '' }
                     );
-                    if (this.terminal.autoScroll && this.terminal.activeTab === 'main') {
-                        this.$nextTick(() => {
-                            const el = this.$el.querySelector('#fp-terminal-log');
-                            if (el) el.scrollTop = el.scrollHeight;
-                        });
+                    // 사용자가 스크롤을 올려 읽는 중이면 리스트를 교체하지 않고
+                    // 새 줄 수만 세어 둔다 — 선택/복사가 흔들리지 않는다.
+                    if (!this.terminal.autoScroll) {
+                        this.terminal.pending = Math.max(0, lines.length - this.terminal.shownLines);
+                        return;
                     }
+                    this.terminal.shownLines = lines.length;
+                    this.terminal.pending = 0;
+                    this.terminal.lines = lines;
+                    this.$nextTick(() => {
+                        const el = this.$el.querySelector('#fp-terminal-log');
+                        if (el) el.scrollTop = el.scrollHeight;
+                    });
                 } catch (e) {}
+            },
+            // 터미널 스크롤백 뷰어와 동일한 라이브 추적 규칙:
+            // 위로 스크롤하면 추적 해제(읽기 고정), 바닥까지 내리면 자동 재개.
+            onMainLogScroll(event) {
+                const el = event.target;
+                const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 24;
+                if (atBottom === this.terminal.autoScroll) return;
+                this.terminal.autoScroll = atBottom;
+                if (atBottom) this.fetchLogs();   // 바닥에 닿으면 즉시 최신 반영
+            },
+            resumeMainLogLive() {
+                this.terminal.autoScroll = true;
+                this.fetchLogs();
             },
             togglePaused() {
                 this.terminal.paused = !this.terminal.paused;
@@ -611,8 +636,8 @@
                 {{ terminal.activeTab === 'main' ? terminal.lines.length : '' }}줄 · {{ terminal.tabs.length }}탭
             </span>
             <div class="ml-auto flex items-center gap-2.5 shrink-0">
-                <label v-if="terminal.activeTab === 'main'" class="flex items-center gap-1.5 text-[11px] text-zinc-400 cursor-pointer hover:text-zinc-200 transition select-none">
-                    <input type="checkbox" v-model="terminal.autoScroll" class="w-3.5 h-3.5 rounded bg-zinc-800 border-zinc-700 text-emerald-500 focus:ring-emerald-500/50"> 자동 스크롤
+                <label v-if="terminal.activeTab === 'main'" class="flex items-center gap-1.5 text-[11px] text-zinc-400 cursor-pointer hover:text-zinc-200 transition select-none" title="스크롤을 위로 올리면 자동 추적이 꺼지고, 바닥까지 내리거나 이 체크박스를 켜면 다시 라이브 추적이 재개됩니다">
+                    <input type="checkbox" v-model="terminal.autoScroll" @change="terminal.autoScroll && fetchLogs()" class="w-3.5 h-3.5 rounded bg-zinc-800 border-zinc-700 text-emerald-500 focus:ring-emerald-500/50"> 자동 스크롤
                 </label>
                 <button v-if="terminal.activeTab === 'main'" @click="togglePaused" class="text-[11px] font-medium px-2.5 py-1 rounded-md border transition"
                     :class="terminal.paused ? 'bg-amber-500/15 border-amber-500/40 text-amber-300' : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700'">
@@ -653,13 +678,18 @@
 
         <!-- 본문: 로그 뷰 / xterm 호스트 -->
         <div class="flex-1 min-h-0 relative">
-            <div v-show="terminal.activeTab === 'main'" id="fp-terminal-log" class="absolute inset-0 overflow-y-auto bg-[#0c0c0e] p-3 sm:p-4 font-mono text-[11px] leading-[1.65]">
+            <div v-show="terminal.activeTab === 'main'" id="fp-terminal-log" class="absolute inset-0 overflow-y-auto bg-[#0c0c0e] p-3 sm:p-4 font-mono text-[11px] leading-[1.65]" @scroll.passive="onMainLogScroll">
                 <div v-if="!terminal.lines.length" class="text-zinc-600">로딩 중...</div>
                 <div v-for="(line, i) in terminal.lines" :key="i" class="flex gap-2.5 whitespace-pre-wrap break-words">
                     <span class="shrink-0 select-none text-zinc-600/90">{{ line.t }}</span>
                     <span class="min-w-0 text-zinc-300">{{ line.s }}</span>
                 </div>
             </div>
+            <!-- 스크롤백 뷰어의 "현재 터미널로 ↓"와 같은 라이브 복귀 버튼 -->
+            <button v-if="terminal.activeTab === 'main' && !terminal.autoScroll" @click="resumeMainLogLive" class="absolute bottom-4 right-4 z-10 flex items-center gap-2 rounded-md border border-emerald-500/40 bg-zinc-900/90 px-2.5 py-1 text-[11px] font-medium text-emerald-300 shadow-lg backdrop-blur transition hover:bg-zinc-800 hover:border-emerald-500/60">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                <span>{{ terminal.pending ? '새 로그 ' + terminal.pending + '줄' : '라이브 로그' }}</span> ↓
+            </button>
             <div v-for="tab in termTabs" :key="'fp-host-'+tab.id" :data-term="tab.id" v-show="terminal.activeTab === tab.id"
                 @wheel.capture="onHostWheel"
                 class="fp-term-host absolute inset-0 bg-[#0c0c0e] p-2.5"></div>

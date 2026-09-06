@@ -54,6 +54,11 @@
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 10px; }
         ::-webkit-scrollbar-thumb:hover { background: #52525b; }
+        /* 서비스 도크는 휠/터치 스크롤은 유지하되 고정 UI 위에 브라우저 기본
+           스크롤바가 번쩍이지 않게 한다. overflow-y:auto가 암묵적으로 만드는
+           가로 스크롤도 함께 차단한다. */
+        .service-dock-scroll { overflow-x: hidden; scrollbar-width: none; -ms-overflow-style: none; }
+        .service-dock-scroll::-webkit-scrollbar { display: none; width: 0; height: 0; }
         
         /* 공통 트랜지션 및 폼 스타일 */
         button, input, select { transition: all 0.15s ease; }
@@ -76,6 +81,8 @@
         
         .log-container { font-family: 'JetBrains Mono', monospace; white-space: pre-wrap; word-wrap: break-word; font-size: 0.8rem; line-height: 1.5; }
         .modal-scroll-lock { overscroll-behavior: contain; touch-action: pan-y; }
+        /* 서비스 카드 크기 '컴팩트': 카드 내용 전체를 레이아웃 단위로 축척(리플로우 유지) */
+        .svc-grid.svc-size-sm .svc-card { zoom: 0.82; }
         
         /* 모달 애니메이션 */
         .fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
@@ -456,38 +463,65 @@
             </div>
         </section>
 
-        <!-- Service card visibility toggles (서버 저장) -->
+        <!-- Service card visibility toggles (서버 저장, 접기/펴기) -->
         <section class="bg-zinc-900 border border-zinc-800 rounded-xl p-4 sm:p-5">
             <div class="flex flex-wrap items-start justify-between gap-2">
-                <div>
+                <div class="min-w-0 flex-1">
                     <h3 class="text-sm font-semibold text-zinc-200">서비스 카드 표시 설정</h3>
-                    <p class="text-[10px] text-zinc-500 mt-0.5">켜진 서비스만 아래에 카드로 표시됩니다. 토글 상태는 서버에 저장되어 새로고침 후에도 유지됩니다.</p>
+                    <p v-if="serviceVisibilityExpanded" class="text-[10px] text-zinc-500 mt-0.5">켜진 서비스만 아래에 카드로 표시됩니다. 토글 상태는 서버에 저장되어 새로고침 후에도 유지됩니다.</p>
+                    <div v-else class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-zinc-500">
+                        <span class="whitespace-nowrap"><b class="font-medium text-zinc-300">카드 {{ serviceVisibilityEntries.filter(i => serviceVisible(i.key)).length }}/{{ serviceVisibilityEntries.length }} 표시</b></span>
+                        <span v-for="item in serviceVisibilityEntries" :key="'svc-vis-summary-'+item.key" class="whitespace-nowrap"><b :class="serviceVisible(item.key) ? 'font-medium text-emerald-300' : 'font-medium text-zinc-600'">{{ item.label }}</b> <span :class="serviceVisible(item.key) ? 'text-emerald-400/70' : ''">{{ serviceVisible(item.key) ? 'ON' : 'OFF' }}</span></span>
+                    </div>
                 </div>
-                <div class="flex gap-2">
-                    <button @click="setAllServiceVisibility(true)" class="rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-1 text-[10px] text-zinc-400 transition hover:bg-zinc-700 hover:text-zinc-200">전체 켜기</button>
-                    <button @click="setAllServiceVisibility(false)" class="rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-1 text-[10px] text-zinc-400 transition hover:bg-zinc-700 hover:text-zinc-200">전체 끄기</button>
+                <div class="flex flex-wrap items-center justify-end gap-2">
+                    <template v-if="serviceVisibilityExpanded">
+                        <div class="flex items-center gap-0.5 rounded-lg border border-zinc-700 bg-zinc-950/60 p-0.5" title="카드 크기 — 한 줄에 보이는 개수와 카드 배율이 함께 바뀝니다">
+                            <span class="px-1.5 text-[10px] text-zinc-600">크기</span>
+                            <button v-for="opt in serviceSizeOptions" :key="'svc-size-'+opt.key" @click="setCardSize(opt.key)" :aria-pressed="cardSize === opt.key" class="rounded-md px-2 py-1 text-[10px] font-medium transition" :class="cardSize === opt.key ? 'bg-indigo-600 text-white' : 'text-zinc-500 hover:text-zinc-300'">{{ opt.label }}</button>
+                        </div>
+                        <button @click="toggleServiceOrderEditing" :aria-pressed="serviceOrderEditing" class="rounded-lg border px-2.5 py-1 text-[10px] font-medium transition" :class="serviceOrderEditing ? 'border-indigo-500/50 bg-indigo-500/15 text-indigo-300 hover:bg-indigo-500/25' : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200'">{{ serviceOrderEditing ? '순서 편집 완료' : '순서 편집' }}</button>
+                        <button @click="setAllServiceVisibility(true)" class="rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-1 text-[10px] text-zinc-400 transition hover:bg-zinc-700 hover:text-zinc-200">전체 켜기</button>
+                        <button @click="setAllServiceVisibility(false)" class="rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-1 text-[10px] text-zinc-400 transition hover:bg-zinc-700 hover:text-zinc-200">전체 끄기</button>
+                    </template>
+                    <button @click="serviceVisibilityExpanded=!serviceVisibilityExpanded" :aria-expanded="serviceVisibilityExpanded" class="shrink-0 rounded border border-zinc-700 bg-zinc-800/60 px-2.5 py-1 text-[10px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200">{{ serviceVisibilityExpanded ? '접기' : '펼치기' }}</button>
                 </div>
             </div>
-            <div class="mt-3 flex flex-wrap gap-2">
-                <button v-for="item in serviceVisibilityEntries" :key="item.key" @click="toggleServiceVisibility(item.key)" :disabled="serviceVisibilityBusy[item.key]" :aria-pressed="serviceVisible(item.key)" :title="serviceVisible(item.key) ? '카드 숨기기' : '카드 표시'" class="flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition disabled:opacity-50" :class="serviceVisible(item.key) ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:border-emerald-500/50' : 'border-zinc-800 bg-zinc-950/50 text-zinc-500 hover:border-zinc-700'">
-                    <span class="flex h-4 w-7 items-center rounded-full p-0.5 transition" :class="serviceVisible(item.key) ? 'bg-emerald-500/70 justify-end' : 'bg-zinc-700 justify-start'">
-                        <span class="h-3 w-3 rounded-full bg-white shadow"></span>
-                    </span>
-                    <span>{{ item.label }}</span>
-                </button>
-            </div>
+            <template v-if="serviceVisibilityExpanded">
+                <p v-if="serviceOrderEditing" class="mt-3 text-[10px] text-indigo-300/80">칩을 드래그하거나 ◀ ▶ 버튼으로 카드 순서를 바꿉니다. 순서와 크기는 서버에 저장되어 새로고침 후에도 유지됩니다.</p>
+                <!-- 순서 편집 모드: 드래그(마우스/터치) + 화살표 -->
+                <div v-if="serviceOrderEditing" class="mt-2 flex flex-wrap gap-2">
+                    <div v-for="(item, idx) in serviceVisibilityEntries" :key="'svc-ord-'+item.key" :data-order-key="item.key"
+                        @pointerdown="onOrderChipDown($event, item.key)" @pointermove="onOrderChipMove" @pointerup="onOrderChipUp" @pointercancel="onOrderChipUp"
+                        class="relative flex touch-none select-none items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition" :class="orderDrag.key === item.key ? 'z-10 scale-105 cursor-grabbing border-indigo-500/60 bg-zinc-700 text-zinc-100 shadow-xl' : 'cursor-grab border-zinc-700 bg-zinc-800/70 text-zinc-300 hover:border-zinc-600'">
+                        <svg class="h-3.5 w-3.5 shrink-0 text-zinc-500" fill="currentColor" viewBox="0 0 24 24"><circle cx="9" cy="5" r="1.5"></circle><circle cx="9" cy="12" r="1.5"></circle><circle cx="9" cy="19" r="1.5"></circle><circle cx="15" cy="5" r="1.5"></circle><circle cx="15" cy="12" r="1.5"></circle><circle cx="15" cy="19" r="1.5"></circle></svg>
+                        <span class="whitespace-nowrap">{{ idx + 1 }}. {{ item.label }}</span>
+                        <button @click.stop="moveServiceOrder(item.key, -1)" :disabled="idx === 0" class="rounded px-1 text-zinc-500 transition hover:bg-zinc-700 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-30" title="앞으로 이동">◀</button>
+                        <button @click.stop="moveServiceOrder(item.key, 1)" :disabled="idx === serviceVisibilityEntries.length - 1" class="rounded px-1 text-zinc-500 transition hover:bg-zinc-700 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-30" title="뒤로 이동">▶</button>
+                    </div>
+                </div>
+                <!-- 일반 모드: 표시 토글 -->
+                <div v-else class="mt-3 flex flex-wrap gap-2">
+                    <button v-for="item in serviceVisibilityEntries" :key="item.key" @click="toggleServiceVisibility(item.key)" :disabled="serviceVisibilityBusy[item.key]" :aria-pressed="serviceVisible(item.key)" :title="serviceVisible(item.key) ? '카드 숨기기' : '카드 표시'" class="flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition disabled:opacity-50" :class="serviceVisible(item.key) ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:border-emerald-500/50' : 'border-zinc-800 bg-zinc-950/50 text-zinc-500 hover:border-zinc-700'">
+                        <span class="flex h-4 w-7 items-center rounded-full p-0.5 transition" :class="serviceVisible(item.key) ? 'bg-emerald-500/70 justify-end' : 'bg-zinc-700 justify-start'">
+                            <span class="h-3 w-3 rounded-full bg-white shadow"></span>
+                        </span>
+                        <span>{{ item.label }}</span>
+                    </button>
+                </div>
+            </template>
         </section>
 
         <!-- Services (Cards) -->
-        <section class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+        <section class="svc-grid grid" :class="serviceGridClass">
 
-            <div v-if="serviceVisibilityLoaded && !anyServiceVisible" class="col-span-full rounded-xl border border-dashed border-zinc-800 bg-zinc-900/40 py-10 text-center text-xs text-zinc-500">표시 중인 서비스 카드가 없습니다. 위 토글에서 서비스를 켜세요.</div>
+            <div v-if="serviceVisibilityLoaded && !anyServiceVisible" class="col-span-full rounded-xl border border-dashed border-zinc-800 bg-zinc-900/40 py-10 text-center text-xs text-zinc-500">표시 중인 서비스 카드가 없습니다. '서비스 카드 표시 설정'을 펼쳐서 서비스를 켜세요.</div>
 
             <!-- Telegram Bot -->
-            <div v-if="serviceVisible('bot')" class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition">
+            <div v-if="serviceVisible('bot')" :style="{ order: cardOrder('bot') }" class="svc-card bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition">
                 <div class="flex justify-between items-start mb-4">
                     <div>
-                        <h3 class="text-base font-semibold text-zinc-100">Telegram Bot</h3>
+                        <h3 class="flex items-center gap-2 text-base font-semibold text-zinc-100"><img src="/service-icon/telegram" alt="" class="h-6 w-6 shrink-0 object-contain">Telegram Bot</h3>
                         <p class="text-xs text-zinc-500 mt-1">Background isolated process</p>
                     </div>
                     <div class="flex items-center gap-2">
@@ -507,10 +541,10 @@
             </div>
 
             <!-- Local Watcher -->
-            <div v-if="serviceVisible('watcher')" class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition">
+            <div v-if="serviceVisible('watcher')" :style="{ order: cardOrder('watcher') }" class="svc-card bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition">
                 <div class="flex justify-between items-start mb-4">
                     <div>
-                        <h3 class="text-base font-semibold text-zinc-100">Local Watcher</h3>
+                        <h3 class="flex items-center gap-2 text-base font-semibold text-zinc-100"><span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-zinc-800 text-zinc-300"><svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path><circle cx="12" cy="12" r="2.5" stroke-width="2"></circle></svg></span>Local Watcher</h3>
                         <p class="text-xs text-zinc-500 mt-1">Keyword monitor and alerts</p>
                     </div>
                     <div class="flex items-center gap-2">
@@ -536,9 +570,9 @@
             </div>
 
             <!-- Unsloth Studio -->
-            <div v-if="serviceVisible('unsloth')" class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition">
+            <div v-if="serviceVisible('unsloth')" :style="{ order: cardOrder('unsloth') }" class="svc-card bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition">
                 <div class="flex justify-between items-start mb-4">
-                    <div><h3 class="text-base font-semibold text-zinc-100">Unsloth Studio</h3><p class="text-xs text-zinc-500 mt-1">Headless Web</p></div>
+                    <div><h3 class="flex items-center gap-2 text-base font-semibold text-zinc-100"><img src="/service-icon/unsloth" alt="" class="h-6 w-6 shrink-0 object-contain">Unsloth Studio</h3><p class="text-xs text-zinc-500 mt-1">Headless Web</p></div>
                     <div class="flex items-center gap-2">
                         <span class="flex h-2 w-2 relative"><span v-if="status.unsloth" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span><span class="relative inline-flex rounded-full h-2 w-2" :class="status.unsloth ? 'bg-emerald-500' : 'bg-zinc-600'"></span></span>
                         <button @click="forceKill('unsloth')" :disabled="!status.unsloth" class="text-[10px] bg-zinc-800 hover:bg-rose-900/40 hover:text-rose-400 text-zinc-400 px-2 py-0.5 rounded border border-zinc-700 transition disabled:opacity-30" title="Force Kill">Kill</button>
@@ -560,10 +594,10 @@
             </div>
 
             <!-- Coding agent services -->
-            <div v-for="agent in visibleAgentDefs" :key="agent.key" class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition">
+            <div v-for="agent in visibleAgentDefs" :key="agent.key" :style="{ order: cardOrder(agent.key) }" class="svc-card bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition">
                 <div class="flex justify-between items-start mb-4">
                     <div>
-                        <h3 class="text-base font-semibold text-zinc-100">{{ agent.label }}</h3>
+                        <h3 class="flex items-center gap-2 text-base font-semibold text-zinc-100"><img :src="'/service-icon/' + serviceLogoName(agent.key)" alt="" class="h-6 w-6 shrink-0 object-contain">{{ agent.label }}</h3>
                         <p class="text-xs text-zinc-500 mt-1">{{ agent.description }}</p>
                     </div>
                     <span class="flex h-2 w-2 relative mt-1">
@@ -592,11 +626,12 @@
             </div>
 
             <!-- DeepSeek Harness -->
-            <div v-if="serviceVisible('deepseek_harness')" class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition relative overflow-hidden">
+            <div v-if="serviceVisible('deepseek_harness')" :style="{ order: cardOrder('deepseek_harness') }" class="svc-card bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition relative overflow-hidden">
                 <div v-if="status.deepseek_harness" class="absolute top-0 right-0 bg-cyan-500/10 border-b border-l border-cyan-500/20 text-cyan-300 text-[10px] font-semibold px-2 py-1 rounded-bl-lg">TAILSCALE</div>
                 <div class="flex justify-between items-start mb-4">
                     <div>
                         <div class="flex items-center gap-2">
+                            <img src="/service-icon/dsh" alt="" class="h-6 w-6 shrink-0 object-contain">
                             <h3 class="text-base font-semibold text-zinc-100">DSH</h3>
                         </div>
                         <p class="text-xs text-zinc-500 mt-1">Local-first coding agent Web UI</p>
@@ -634,10 +669,11 @@
 
             <!-- ComfyUI -->
             <!-- ComfyUI -->
-            <div v-if="serviceVisible('comfyui')" class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition relative overflow-hidden">
+            <div v-if="serviceVisible('comfyui')" :style="{ order: cardOrder('comfyui') }" class="svc-card bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition relative overflow-hidden">
                 <div v-if="status.comfyui || status.comfyui_gpu1" class="absolute top-0 right-0 bg-indigo-500/10 border-b border-l border-indigo-500/20 text-indigo-400 text-[10px] font-semibold px-2 py-1 rounded-bl-lg">VRAM Active</div>
                 <div class="flex justify-between items-start mb-4">
                     <div class="flex items-center gap-2">
+                        <img src="/service-icon/comfy" alt="" class="h-6 w-6 shrink-0 object-contain">
                         <h3 class="text-base font-semibold text-zinc-100">ComfyUI</h3>
                         <span class="rounded border border-zinc-700 px-1.5 py-0.5 font-mono text-[9px] text-zinc-500">{{ comfyInstances.length }} INST</span>
                     </div>
@@ -692,25 +728,72 @@
             </div>
 
             <!-- Llama.cpp -->
-            <div v-if="serviceVisible('llamacpp')" class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition relative overflow-hidden">
+            <div v-if="serviceVisible('llamacpp')" :style="{ order: cardOrder('llamacpp') }" class="svc-card bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition relative overflow-hidden">
                 <div v-if="status.llamacpp" class="absolute top-0 right-0 bg-indigo-500/10 border-b border-l border-indigo-500/20 text-indigo-400 text-[10px] font-semibold px-2 py-1 rounded-bl-lg">VRAM Active</div>
                 <div class="flex justify-between items-start mb-4">
                     <div>
-                        <h3 class="text-base font-semibold text-zinc-100">Llama.cpp</h3>
+                        <h3 class="flex items-center gap-2 text-base font-semibold text-zinc-100"><img src="/service-icon/llama" alt="" class="h-6 w-6 shrink-0 object-contain">Llama.cpp</h3>
+                        <p class="text-xs text-zinc-500 mt-1">Profile & command launcher</p>
                     </div>
                     <div class="flex items-center gap-2">
                         <span class="flex h-2 w-2 relative">
                             <span v-if="status.llamacpp" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                             <span class="relative inline-flex rounded-full h-2 w-2" :class="status.llamacpp ? 'bg-emerald-500' : 'bg-zinc-600'"></span>
                         </span>
+                        <button @click="openLlamaConfigurator" class="rounded border border-zinc-700 bg-zinc-800 p-1 text-zinc-400 transition hover:bg-zinc-700 hover:text-indigo-300" title="Llama.cpp 설정">
+                            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                        </button>
                         <button @click="forceKill('llamacpp')" class="text-[10px] bg-zinc-800 hover:bg-rose-900/40 hover:text-rose-400 text-zinc-400 px-2 py-0.5 rounded border border-zinc-700 transition" title="Force Kill">Kill</button>
                     </div>
                 </div>
-                
+
+                <div v-if="llamaCommandEditing" class="mb-3 space-y-3 rounded-lg border border-indigo-500/30 bg-zinc-950/50 p-3">
+                    <p class="text-[10px] leading-relaxed text-zinc-500">완성된 llama.cpp 실행 명령어를 그대로 저장합니다. Linux에서는 <span class="font-mono text-zinc-400">bash -lc</span>로 실행됩니다.</p>
+                    <div v-if="!llamaCommandDraft.length" class="py-1 text-center text-[10px] text-zinc-600">명령 슬롯이 없습니다.</div>
+                    <div v-for="(slot, index) in llamaCommandDraft" :key="slot.id || ('llama-draft-' + index)" class="space-y-1.5 rounded-lg border border-zinc-800 bg-zinc-900/60 p-2.5">
+                        <div class="flex items-center gap-2">
+                            <span class="shrink-0 text-[9px] font-semibold text-zinc-600">{{ index + 1 }}</span>
+                            <input v-model.trim="slot.name" maxlength="80" placeholder="슬롯 이름" class="input-base min-w-0 flex-1 text-xs font-medium">
+                            <button @click="removeLlamaCommandSlot(index)" class="shrink-0 rounded border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-zinc-500 transition hover:border-rose-900/50 hover:text-rose-400" title="슬롯 삭제">
+                                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                            </button>
+                        </div>
+                        <textarea v-model="slot.command" rows="2" placeholder="완성된 llama-server 실행 명령어" class="input-base w-full font-mono text-[11px]" spellcheck="false"></textarea>
+                    </div>
+                    <div class="flex items-center justify-between gap-2 pt-1">
+                        <button @click="addLlamaCommandSlot" class="rounded-lg border border-dashed border-zinc-700 px-3 py-1.5 text-[11px] text-zinc-400 transition hover:border-indigo-500/40 hover:text-indigo-300">+ 슬롯 추가</button>
+                        <div class="flex gap-2">
+                            <button @click="llamaCommandEditing = false" class="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-[11px] text-zinc-400 transition hover:bg-zinc-700">취소</button>
+                            <button @click="saveLlamaCommandSlots" :disabled="llamaCommandSlotsSaving" class="rounded-lg bg-indigo-600 px-3 py-1.5 text-[11px] font-medium text-white transition hover:bg-indigo-500 disabled:opacity-40">{{ llamaCommandSlotsSaving ? '저장 중...' : '슬롯 저장' }}</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div v-else class="mb-4 space-y-3">
+                    <div>
+                        <div class="mb-1.5 flex items-center justify-between"><span class="text-[9px] font-semibold uppercase tracking-widest text-zinc-600">Profile Slots</span><button @click="openLlamaConfigurator" class="text-[10px] text-indigo-400 transition hover:text-indigo-300">설정/프로필 관리</button></div>
+                        <div v-if="!llamaPresetSlots.length" class="rounded-lg border border-dashed border-zinc-800 px-3 py-3 text-center text-[11px] text-zinc-600">저장된 프로필이 없습니다.</div>
+                        <div v-else class="space-y-1.5">
+                            <button v-for="slot in llamaPresetSlots" :key="'preset-'+slot.name" @click="runLlamaPreset(slot.name)" :disabled="status.llamacpp || loading.llamacpp || llamaCommandRunning" class="flex w-full items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-zinc-950/40 px-2.5 py-2 text-left transition hover:border-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-50" :title="slot.model">
+                                <span class="min-w-0"><span class="block truncate text-xs font-medium text-zinc-300">{{ slot.name }}</span><span class="block truncate text-[10px] text-zinc-600">{{ slot.modelName }}</span></span>
+                                <span class="shrink-0 text-[9px] font-mono text-indigo-300">{{ status.llamacpp ? '먼저 Stop' : (loading.llamacpp ? '시작 중…' : '클릭 실행') }}</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="mb-1.5 flex items-center justify-between"><span class="text-[9px] font-semibold uppercase tracking-widest text-zinc-600">Command Slots</span><button @click="toggleLlamaCommandEditor" class="text-[10px] text-indigo-400 transition hover:text-indigo-300">명령 슬롯 관리</button></div>
+                        <div v-if="!llamaCommandSlots.length" class="rounded-lg border border-dashed border-zinc-800 px-3 py-3 text-center text-[11px] text-zinc-600">직접 실행 명령 슬롯이 없습니다.</div>
+                        <div v-else class="space-y-1.5">
+                            <button v-for="slot in llamaCommandSlots" :key="'command-'+slot.id" @click="runLlamaCommandSlot(slot)" :disabled="status.llamacpp || loading.llamacpp || llamaCommandRunning" :title="slot.command" class="flex w-full items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-zinc-950/40 px-2.5 py-2 text-left transition hover:border-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-50">
+                                <span class="min-w-0"><span class="block truncate text-xs font-medium text-zinc-300">{{ slot.name }}</span><span class="block truncate font-mono text-[10px] text-zinc-600">{{ slot.command }}</span></span>
+                                <span class="shrink-0 text-[9px] font-mono text-indigo-300">{{ llamaCommandRunning ? '시작 중…' : (status.llamacpp ? '먼저 Stop' : '클릭 실행') }}</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="mt-auto space-y-2">
                     <button v-if="status.llamacpp" @click="controlServer('llamacpp', 'stop')" :disabled="loading.llamacpp" class="w-full py-2.5 rounded-lg font-medium text-sm border border-zinc-700 bg-zinc-800 text-zinc-300 hover:bg-zinc-700 disabled:opacity-50 transition">Stop Service</button>
-                    <div v-else class="text-xs text-center w-full text-zinc-500 py-2.5 border border-zinc-800 border-dashed rounded-lg bg-zinc-900/50">Configure & Launch below</div>
-                    
                     <div class="flex gap-2">
                         <a :href="serviceUrl(servicePorts.llama)" target="_blank" rel="noopener noreferrer" class="flex-1 flex justify-center items-center py-2 rounded-lg text-xs font-medium border border-zinc-800 bg-zinc-800/50 text-indigo-300 hover:bg-zinc-800 hover:border-zinc-700 transition">Endpoint ({{servicePorts.llama}})</a>
                         <button @click="openLogModal('llamacpp')" class="flex-1 py-2 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 transition">Log</button>
@@ -719,11 +802,11 @@
             </div>
 
             <!-- vLLM (슬롯 명령어 런처) -->
-            <div v-if="serviceVisible('vllm')" class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition relative overflow-hidden">
+            <div v-if="serviceVisible('vllm')" :style="{ order: cardOrder('vllm') }" class="svc-card bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition relative overflow-hidden">
                 <div v-if="status.vllm" class="absolute top-0 right-0 bg-rose-500/10 border-b border-l border-rose-500/20 text-rose-300 text-[10px] font-semibold px-2 py-1 rounded-bl-lg">VRAM Active</div>
                 <div class="flex justify-between items-start mb-4">
                     <div>
-                        <h3 class="text-base font-semibold text-zinc-100">vLLM</h3>
+                        <h3 class="flex items-center gap-2 text-base font-semibold text-zinc-100"><img src="/service-icon/vllm" alt="" class="h-6 w-6 shrink-0 object-contain">vLLM</h3>
                         <p class="text-xs text-zinc-500 mt-1">Slot command launcher</p>
                     </div>
                     <div class="flex items-center gap-2">
@@ -739,15 +822,15 @@
                 <div v-if="vllmEditing" class="mb-3 space-y-3 rounded-lg border border-rose-500/30 bg-zinc-950/50 p-3">
                     <p class="text-[10px] leading-relaxed text-zinc-500">완성된 실행 명령어를 그대로 저장합니다. 실행 시 <span class="font-mono text-zinc-400">bash -lc</span>로 실행되며, vLLM venv와 <span class="font-mono text-zinc-400">~/.local/bin</span>이 PATH에 우선 추가됩니다.</p>
                     <div v-if="!vllmDraft.length" class="py-1 text-center text-[10px] text-zinc-600">슬롯이 없습니다. 아래 버튼으로 추가하세요.</div>
-                    <div v-for="(slot, index) in vllmDraft" :key="slot.id || ('draft-' + index)" class="space-y-1.5">
+                    <div v-for="(slot, index) in vllmDraft" :key="slot.id || ('draft-' + index)" class="space-y-1.5 rounded-lg border border-zinc-800 bg-zinc-900/60 p-2.5">
                         <div class="flex items-center gap-2">
-                            <input v-model.trim="slot.name" maxlength="80" placeholder="슬롯 이름" class="input-base w-32 shrink-0 text-xs">
-                            <span class="flex-1"></span>
+                            <span class="shrink-0 text-[9px] font-semibold uppercase tracking-wider text-zinc-600">{{ index + 1 }}</span>
+                            <input v-model.trim="slot.name" maxlength="80" placeholder="슬롯 이름 (예: Qwen3.8 PP2 INT4)" class="input-base min-w-0 flex-1 text-xs font-medium">
                             <button @click="removeVllmSlot(index)" class="shrink-0 px-2 py-1.5 rounded border border-zinc-700 bg-zinc-800 text-zinc-500 transition hover:text-rose-400 hover:border-rose-900/50" title="슬롯 삭제">
                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                             </button>
                         </div>
-                        <textarea v-model="slot.command" rows="2" placeholder="예: vllm serve /mnt/main-server-models/model/... --host 0.0.0.0 --port 8000" class="input-base w-full font-mono text-[11px]" spellcheck="false"></textarea>
+                        <textarea v-model="slot.command" rows="2" placeholder="완성된 실행 명령어 (여러 줄 가능)" class="input-base w-full font-mono text-[11px]" spellcheck="false"></textarea>
                     </div>
                     <div class="flex items-center justify-between gap-2 pt-1">
                         <button @click="addVllmSlot()" class="rounded-lg border border-dashed border-zinc-700 px-3 py-1.5 text-[11px] text-zinc-400 transition hover:border-rose-500/40 hover:text-rose-300">+ 슬롯 추가</button>
@@ -758,20 +841,34 @@
                     </div>
                 </div>
 
-                <!-- 슬롯 목록: 클릭 실행 -->
+                <!-- 슬롯 목록: 클릭 실행 + 인라인 제목 변경 -->
                 <div v-else class="mb-4 space-y-2">
                     <div v-if="!vllmSlots.length" class="rounded-lg border border-dashed border-zinc-800 px-3 py-4 text-center text-[11px] text-zinc-600">슬롯이 없습니다. <span class="text-rose-300">슬롯 관리</span>에서 완성된 vLLM 실행 명령어를 추가하세요.</div>
-                    <button v-for="slot in vllmSlots" :key="slot.id" @click="runVllmSlot(slot)" :disabled="status.vllm || vllmRunning" :title="slot.command" class="w-full flex flex-col gap-1 rounded-lg border border-zinc-800 bg-zinc-950/40 p-2.5 text-left transition" :class="status.vllm ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:border-rose-500/40'">
-                        <span class="flex w-full items-center justify-between gap-2">
-                            <span class="truncate text-xs font-medium text-zinc-300">{{ slot.name }}</span>
-                            <span class="shrink-0 text-[9px] font-mono" :class="status.vllm ? 'text-zinc-600' : 'text-rose-300'">{{ vllmRunning ? '실행 중…' : (status.vllm ? '먼저 Stop' : '클릭 실행') }}</span>
-                        </span>
-                        <span class="block truncate font-mono text-[10px] text-zinc-500">{{ slot.command }}</span>
-                    </button>
+                    <div v-for="slot in vllmSlots" :key="slot.id" class="rounded-lg border bg-zinc-950/40 transition" :class="vllmRenameId === slot.id ? 'border-rose-500/40' : 'border-zinc-800'">
+                        <!-- 인라인 제목 편집 -->
+                        <div v-if="vllmRenameId === slot.id" class="flex items-center gap-1.5 p-2">
+                            <input ref="vllmRenameInput" v-model="vllmRenameValue" maxlength="80" placeholder="슬롯 제목" class="input-base min-w-0 flex-1 text-xs font-medium" @keydown.enter.prevent="commitVllmRename(slot)" @keydown.esc="cancelVllmRename()" @blur="commitVllmRename(slot)">
+                            <button @mousedown.prevent @click="commitVllmRename(slot)" class="shrink-0 rounded border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-[10px] font-medium text-rose-300 transition hover:bg-rose-500/20">저장</button>
+                            <button @mousedown.prevent @click="cancelVllmRename()" class="shrink-0 rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-[10px] text-zinc-400 transition hover:bg-zinc-700">취소</button>
+                        </div>
+                        <!-- 일반 모드: 실행 + 연필 -->
+                        <div v-else class="flex items-stretch" :class="!(status.vllm || vllmRunning) ? 'hover:border-rose-500/30' : ''">
+                            <button @click="runVllmSlot(slot)" :disabled="status.vllm || vllmRunning" :title="slot.command" class="flex min-w-0 flex-1 flex-col gap-1 px-2.5 py-2 text-left transition" :class="status.vllm || vllmRunning ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'">
+                                <span class="flex w-full items-center justify-between gap-2">
+                                    <span class="truncate text-xs font-medium text-zinc-300">{{ slot.name }}</span>
+                                    <span class="shrink-0 text-[9px] font-mono" :class="status.vllm ? 'text-zinc-600' : 'text-rose-300'">{{ vllmRunning ? '실행 시작…' : (status.vllm ? '먼저 Stop' : '클릭 실행') }}</span>
+                                </span>
+                                <span class="block truncate font-mono text-[10px] text-zinc-500">{{ slot.command }}</span>
+                            </button>
+                            <button @click="startVllmRename(slot)" class="shrink-0 border-l border-zinc-800 px-2 text-zinc-600 transition hover:bg-zinc-800/50 hover:text-zinc-300" title="제목 변경">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                            </button>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="mt-auto space-y-2">
-                    <button v-if="status.vllm" @click="stopVllm" :disabled="vllmStopping" class="w-full py-2.5 rounded-lg font-medium text-sm border border-zinc-700 bg-zinc-800 text-zinc-300 hover:bg-zinc-700 disabled:opacity-50 transition">{{ vllmStopping ? 'Stopping…' : 'Stop Service' }}</button>
+                    <button v-if="status.vllm || vllmRunning || vllmStopping" @click="stopVllm" :disabled="vllmStopping" class="w-full py-2.5 rounded-lg font-medium text-sm border border-zinc-700 bg-zinc-800 text-zinc-300 hover:bg-zinc-700 disabled:opacity-50 transition">{{ vllmStopping ? 'Stopping…' : (vllmRunning && !status.vllm ? 'Stop Starting Service' : 'Stop Service') }}</button>
                     <div class="flex gap-2">
                         <button @click="copyVllmApiUrl" class="flex-1 py-2 rounded-lg text-xs font-medium border border-zinc-800 bg-zinc-800/50 text-rose-300 hover:bg-zinc-800 hover:border-zinc-700 transition" :title="`${serviceUrl(servicePorts.vllm)}/v1`">{{ vllmCopied ? '복사됨 ✓' : `API URL 복사 (:${servicePorts.vllm})` }}</button>
                         <button @click="openLogModal('vllm')" class="flex-1 py-2 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 transition">Log</button>
@@ -782,10 +879,13 @@
         </section>
 
         <!-- Llama.cpp Configurator -->
-        <section class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 sm:p-7 shadow-sm">
+        <transition name="fade">
+        <div v-if="llamaConfigModal.show" class="fixed inset-0 z-50 flex items-stretch justify-center overflow-hidden sm:items-center sm:p-6" @click.self="closeLlamaConfigurator">
+        <div class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
+        <section class="modal-scroll-lock relative h-[100dvh] max-h-[100dvh] w-full overflow-y-auto border border-zinc-800 bg-zinc-900 p-5 shadow-2xl sm:h-[95vh] sm:max-h-[95vh] sm:max-w-6xl sm:rounded-xl sm:p-7">
             <div class="flex flex-col lg:flex-row justify-between items-start lg:items-center border-b border-zinc-800 pb-5 mb-6 gap-4">
                 <div>
-                    <h2 class="text-lg font-semibold text-zinc-100">Llama.cpp Configurator</h2>
+                    <h2 class="flex items-center gap-2 text-lg font-semibold text-zinc-100"><img src="/service-icon/llama" alt="" class="h-6 w-6 object-contain">Llama.cpp Configurator</h2>
                     <p class="text-xs text-zinc-500 mt-1">Construct engine arguments and manage presets</p>
                 </div>
                 <div class="flex flex-col sm:flex-row w-full lg:w-auto gap-3">
@@ -801,6 +901,9 @@
                     <div class="flex gap-2 w-full sm:w-auto">
                         <button v-if="selectedPreset" @click="savePresetOverwrite" class="w-full sm:w-auto px-4 py-2 text-sm font-medium border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-zinc-300 transition">Save</button>
                         <button @click="savePresetAs" class="w-full sm:w-auto px-4 py-2 text-sm font-medium border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 rounded-lg transition whitespace-nowrap">Save As...</button>
+                        <button @click="closeLlamaConfigurator" class="px-3 py-2 text-zinc-500 transition hover:text-zinc-200" title="Close">
+                            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        </button>
                     </div>
                 </div>
             </div>
@@ -1086,13 +1189,15 @@
                 </div>
             </div>
         </section>
+        </div>
+        </transition>
 
         <!-- Modals -->
 
         <!-- Terminal Log Modal -->
         <transition name="fade">
             <div v-if="logModal.show" class="fixed inset-0 z-50 flex items-stretch justify-center overflow-hidden sm:items-center sm:p-6" @click.self="closeLogModal">
-                <div class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
+                <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="closeLogModal"></div>
                 
                 <div class="relative bg-zinc-900 border border-zinc-800 w-full h-screen max-h-screen h-[100dvh] max-h-[100dvh] flex flex-col shadow-2xl overflow-hidden sm:max-w-6xl sm:h-[95vh] sm:max-h-[95vh] sm:rounded-xl">
                     
@@ -1107,8 +1212,8 @@
                             </button>
                         </div>
                         <div class="flex items-center justify-between gap-3 sm:justify-end sm:gap-4">
-                            <label class="text-xs text-zinc-400 flex items-center gap-2 cursor-pointer hover:text-zinc-200 transition">
-                                <input type="checkbox" v-model="logModal.autoScroll" class="w-3.5 h-3.5 rounded bg-zinc-800 border-zinc-700 text-indigo-500 focus:ring-indigo-500/50 focus:ring-offset-zinc-950"> Auto-scroll
+                            <label class="text-xs text-zinc-400 flex items-center gap-2 cursor-pointer hover:text-zinc-200 transition" title="스크롤을 위로 올리면 자동 추적이 꺼지고, 바닥까지 내리거나 라이브 버튼으로 다시 켜집니다">
+                                <input type="checkbox" v-model="logModal.autoScroll" @change="logModal.autoScroll && fetchLogs()" class="w-3.5 h-3.5 rounded bg-zinc-800 border-zinc-700 text-indigo-500 focus:ring-indigo-500/50 focus:ring-offset-zinc-950"> Auto-scroll
                             </label>
                             <button @click="clearLog" class="text-[11px] font-medium bg-zinc-800 hover:bg-zinc-700 px-2.5 py-1 rounded-md text-zinc-300 transition border border-zinc-700">Clear</button>
                             <button @click="closeLogModal" class="hidden text-zinc-500 hover:text-zinc-200 transition sm:block" title="Close">
@@ -1137,8 +1242,15 @@
                     </div>
 
                     <!-- Terminal Output -->
-                    <div class="modal-scroll-lock min-h-0 flex-1 bg-[#0c0c0e] p-3 overflow-y-auto sm:p-5" id="log-terminal">
-                        <pre class="log-container text-zinc-300">{{ logModal.content }}</pre>
+                    <div class="relative flex min-h-0 flex-1 flex-col">
+                        <div class="modal-scroll-lock min-h-0 flex-1 bg-[#0c0c0e] p-3 overflow-y-auto sm:p-5" id="log-terminal" @scroll.passive="onLogModalScroll">
+                            <pre class="log-container text-zinc-300">{{ logModal.content }}</pre>
+                        </div>
+                        <!-- 스크롤백 뷰어의 "현재 터미널로 ↓"와 같은 라이브 복귀 버튼 -->
+                        <button v-if="!logModal.autoScroll" @click="resumeLogLive" class="absolute bottom-4 right-4 z-10 flex items-center gap-2 rounded-md border border-emerald-500/40 bg-zinc-900/90 px-3 py-1.5 text-[11px] font-medium text-emerald-300 shadow-lg backdrop-blur transition hover:bg-zinc-800 hover:border-emerald-500/60">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                            <span>{{ logModal.pending ? `새 로그 ${logModal.pending}줄` : '라이브 로그' }}</span> ↓
+                        </button>
                     </div>
 
                     <div class="border-t border-zinc-800 bg-zinc-950 px-4 py-3 sm:hidden">
@@ -1357,15 +1469,40 @@
             </div>
         </transition>
 
-        <!-- 플로팅 버튼 스택: 터미널 로그(위) / 메모(아래) -->
-        <div class="fixed bottom-6 right-6 z-40 flex flex-col items-center gap-3">
+        <!-- 활성 서비스는 기존 터미널/메모 플로팅 버튼 바로 위에 세로로 쌓는다. -->
+        <div class="fixed bottom-6 right-6 z-40 flex max-h-[calc(100vh-3rem)] flex-col items-center gap-3">
+            <transition name="fade">
+                <div v-if="activeDockServices.length && !memo.show && !terminal.show" class="service-dock-scroll flex min-h-0 flex-col items-center gap-2 overflow-y-auto p-1">
+                    <div v-for="service in activeDockServices" :key="'service-dock-'+service.key" class="group relative h-12 w-12 shrink-0">
+                        <button @click="openServiceDockPrimary(service)" :disabled="service.web && !service.ready"
+                            :title="serviceDockTitle(service)" :aria-label="serviceDockTitle(service)"
+                            class="relative flex h-12 w-12 flex-col items-center justify-center gap-0.5 rounded-full border bg-zinc-800/95 shadow-lg backdrop-blur-md transition hover:-translate-y-0.5 hover:bg-zinc-700 disabled:cursor-wait disabled:hover:translate-y-0"
+                            :class="service.ready ? 'border-emerald-500/50 text-zinc-200' : 'border-amber-500/60 text-amber-200'">
+                            <span v-if="!service.ready" class="pointer-events-none absolute inset-[3px] rounded-full border border-amber-400/70 border-t-transparent animate-spin"></span>
+                            <span class="relative flex h-5 w-5 items-center justify-center">
+                                <img v-if="service.logo" :src="'/service-icon/' + service.logo" alt="" class="h-5 w-5 object-contain">
+                                <svg v-else-if="service.icon === 'nodes'" class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2" stroke-width="2"></circle><circle cx="18" cy="7" r="2" stroke-width="2"></circle><circle cx="12" cy="18" r="2" stroke-width="2"></circle><path d="m7.8 7 8.3-.1M7.3 7.7l3.6 8.5m5.7-7.5-3.5 7.6" stroke-width="2"></path></svg>
+                                <svg v-else-if="service.icon === 'send'" class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m21 3-7.5 18-4.2-7.8L3 9.5 21 3Zm-11.7 10.2L21 3"></path></svg>
+                                <svg v-else-if="service.icon === 'eye'" class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path><circle cx="12" cy="12" r="2.5" stroke-width="2"></circle></svg>
+                                <svg v-else-if="service.icon === 'bolt'" class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m13 2-8 12h7l-1 8 8-12h-7l1-8Z"></path></svg>
+                                <svg v-else-if="service.icon === 'llama'" class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M8 20v-7.5C8 9 9.5 7 12 7h1V3l2 2 2-2v7c0 2-1 3-3 3h-2v7m-4-4h4m3-8h.01"></path></svg>
+                                <span v-else class="font-mono text-[11px] font-bold tracking-tight">{{ service.mark }}</span>
+                                <span class="absolute -right-1 -top-1 h-2 w-2 rounded-full ring-2 ring-zinc-800" :class="service.ready ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'"></span>
+                            </span>
+                            <span class="max-w-[2.5rem] truncate font-mono text-[8px] leading-none" :class="service.ready ? 'text-zinc-400' : 'text-amber-300'">{{ formatServiceUptime(service.uptime) }}</span>
+                        </button>
+                        <button @click.stop="openServiceDockLog(service)" :title="`${service.label} 실시간 로그`" :aria-label="`${service.label} 실시간 로그 열기`"
+                            class="absolute -bottom-0.5 -right-0.5 z-10 flex h-5 w-5 items-center justify-center rounded-full border border-zinc-600 bg-zinc-950 font-mono text-[8px] font-bold text-zinc-300 shadow-md transition hover:scale-110 hover:border-indigo-400 hover:text-indigo-300">&gt;_</button>
+                    </div>
+                </div>
+            </transition>
             <button @click="toggleTerminalPanel" title="Main Server 터미널" aria-label="Main Server 터미널 열기"
-                class="w-12 h-12 rounded-full border shadow-lg flex items-center justify-center transition"
+                class="w-12 h-12 shrink-0 rounded-full border shadow-lg flex items-center justify-center transition"
                 :class="terminal.show ? 'bg-emerald-500/15 border-emerald-500/60 text-emerald-300' : 'bg-zinc-800 border-zinc-700 hover:border-zinc-500 hover:bg-zinc-700 text-zinc-300'">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m4 17 6-5-6-5M12 19h8"></path></svg>
             </button>
             <button @click="toggleMemo" title="메모" aria-label="메모 열기"
-                class="w-12 h-12 rounded-full border shadow-lg flex items-center justify-center transition"
+                class="w-12 h-12 shrink-0 rounded-full border shadow-lg flex items-center justify-center transition"
                 :class="memo.show ? 'bg-indigo-500/15 border-indigo-500/60 text-indigo-300' : 'bg-zinc-800 border-zinc-700 hover:border-zinc-500 hover:bg-zinc-700 text-zinc-300'">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
             </button>
@@ -1422,7 +1559,7 @@
                     <div class="ml-auto flex items-center gap-2.5 shrink-0">
                         <template v-if="terminal.activeTab === 'main'">
                             <label class="flex items-center gap-1.5 text-[11px] text-zinc-400 cursor-pointer hover:text-zinc-200 transition select-none">
-                                <input type="checkbox" v-model="terminal.autoScroll" class="w-3.5 h-3.5 rounded bg-zinc-800 border-zinc-700 text-emerald-500 focus:ring-emerald-500/50"> 자동 스크롤
+                                <input type="checkbox" v-model="terminal.autoScroll" @change="terminal.autoScroll && fetchTerminal()" class="w-3.5 h-3.5 rounded bg-zinc-800 border-zinc-700 text-emerald-500 focus:ring-emerald-500/50"> 자동 스크롤
                             </label>
                             <button @click="terminal.paused = !terminal.paused" class="text-[11px] font-medium px-2.5 py-1 rounded-md border transition"
                                 :class="terminal.paused ? 'bg-amber-500/15 border-amber-500/40 text-amber-300' : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700'">
@@ -1470,13 +1607,18 @@
 
                 <!-- 본문: 로그 뷰 / xterm 호스트 -->
                 <div class="flex-1 min-h-0 relative">
-                    <div v-show="terminal.activeTab === 'main'" id="terminal-log" class="absolute inset-0 overflow-y-auto bg-[#0c0c0e] p-3 sm:p-4 font-mono text-[11px] leading-[1.65]">
+                    <div v-show="terminal.activeTab === 'main'" id="terminal-log" class="absolute inset-0 overflow-y-auto bg-[#0c0c0e] p-3 sm:p-4 font-mono text-[11px] leading-[1.65]" @scroll.passive="onTerminalLogScroll">
                         <div v-if="!terminal.lines.length" class="text-zinc-600">로딩 중...</div>
                         <div v-for="(line, i) in terminal.lines" :key="i" class="flex gap-2.5 whitespace-pre-wrap break-words">
                             <span class="shrink-0 select-none text-zinc-600/90">{{ line.t }}</span>
                             <span class="min-w-0 text-zinc-300">{{ line.s }}</span>
                         </div>
                     </div>
+                    <!-- 스크롤백 뷰어의 "현재 터미널로 ↓"와 같은 라이브 복귀 버튼 -->
+                    <button v-if="terminal.activeTab === 'main' && !terminal.autoScroll" @click="resumeTerminalLive" class="absolute bottom-4 right-4 z-10 flex items-center gap-2 rounded-md border border-emerald-500/40 bg-zinc-900/90 px-2.5 py-1 text-[11px] font-medium text-emerald-300 shadow-lg backdrop-blur transition hover:bg-zinc-800 hover:border-emerald-500/60">
+                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                        <span>{{ terminal.pending ? `새 로그 ${terminal.pending}줄` : '라이브 로그' }}</span> ↓
+                    </button>
                     <!-- 인-DOM 템플릿에서는 <template>가 HTML template 요소를 만나면
                          content 조각으로 격리되어 Vue가 못 보므로 div v-for 사용 -->
                     <!-- .capture 필수: tmux가 마우스 모드(SGR wheel)를 켜면 xterm이 자기
@@ -1526,6 +1668,7 @@
                         lhm_available: false
                     },
                     status: { comfyui: false, comfyui_gpu1: false, llamacpp: false, vllm: false, telegram_bot: false, watcher: false, unsloth: false, pi: false, pi_web: false, paseo: false, omp: false, omp_web: false, deepseek_harness: false, initialization: {ready:false, message:'백그라운드 초기화 대기 중'} },
+                    serviceStates: {}, serviceStatusFetchedAt: Date.now(), serviceClock: Date.now(),
                     comfyState: { main: false, gpu1: false },
                     comfyInstances: [
                         { key: 'main', label: 'ComfyUI · 메인(GPU0)', service: 'comfyui', port: 8188 },
@@ -1533,7 +1676,7 @@
                     ],
                     loading: { comfyui: false, llamacpp: false, vllm: false, bot: false, watcher: false, unsloth: false, pi: false, pi_web: false, paseo: false, omp: false, omp_web: false, deepseek_harness: false, status: false },
                     scanData: { versions:[], models:[] },
-                    logModal: { show: false, server: '', title: '', content: '', autoScroll: true },
+                    logModal: { show: false, server: '', title: '', content: '', autoScroll: true, shown: 0, pending: 0 },
                     logTimer: null, hwTimer: null,
                     gpuTopology: { available: false, gpus: [], services: {}, arbiter: { enabled: false, gpus: {} } },
                     arbiterBusy: '',
@@ -1550,10 +1693,20 @@
                     managerService: { enabled: false },
                     servicePorts: { comfyui: 8188, llama: 8080, vllm: 8000, unsloth: 8890, pi: 30174, pi_web: 8504, paseo: 6767, omp: 30176, omp_web: 30177, deepseekHarness: 3080 },
                     // 서비스 카드 표시/숨김 상태 — 서버의 service_visibility.json이 정답.
+                    serviceVisibilityExpanded: false,
                     serviceVisibility: {}, serviceVisibilityLoaded: false, serviceVisibilityBusy: {},
+                    // 카드 레이아웃 — 서버의 service_layout.json이 정답 (표시 순서 + 전체 크기).
+                    serviceOrder: [], cardSize: 'md', serviceOrderEditing: false, layoutSaveTimer: null,
+                    serviceSizeOptions: [{ key: 'sm', label: '컴팩트' }, { key: 'md', label: '보통' }, { key: 'lg', label: '큰' }],
+                    orderDrag: { key: '', pointerId: -1, x: 0, y: 0, active: false },
                     // vLLM 슬롯 카드 — 슬롯 목록은 서버의 vllm_slots.json에 저장.
                     vllmSlots: [], vllmEditing: false, vllmDraft: [], vllmSlotsSaving: false,
-                    vllmRunning: false, vllmStopping: false, vllmCopied: false,
+                    vllmRunning: false, vllmStopping: false, vllmCopied: false, vllmActionGeneration: 0,
+                    vllmRenameId: '', vllmRenameValue: '', vllmRenaming: false,
+                    // llama.cpp 카드: 기존 Configurator 프로필 + 별도 완성 명령 슬롯.
+                    llamaConfigModal: { show: false },
+                    llamaCommandSlots: [], llamaCommandEditing: false, llamaCommandDraft: [],
+                    llamaCommandSlotsSaving: false, llamaCommandRunning: false,
                     unslothAvailable: false,
                     unslothPortDraft: 8890, unslothPortEditing: false, unslothPortSaving: false,
                     agentServiceDefs: [
@@ -1593,6 +1746,7 @@
                     terminal: {
                         show: false, wide: false,
                         lines: [], autoScroll: true, paused: false, timer: null,
+                        shownLines: 0, pending: 0,
                         webTermAvailable: true,
                         tabs: [{ id: 'main', label: 'Main Server', kind: 'log', closable: false, term: null, fit: null, ws: null, connected: false }],
                         activeTab: 'main',
@@ -1630,7 +1784,7 @@
             computed: {
                 // 토글 박스에 표시할 항목: 고정 카드 + coding agent + 나머지 카드 순서.
                 serviceVisibilityEntries() {
-                    return [
+                    const defaults = [
                         { key: 'bot', label: 'Telegram Bot' },
                         { key: 'watcher', label: 'Local Watcher' },
                         { key: 'unsloth', label: 'Unsloth Studio' },
@@ -1640,12 +1794,55 @@
                         { key: 'llamacpp', label: 'Llama.cpp' },
                         { key: 'vllm', label: 'vLLM' },
                     ];
+                    if (!this.serviceOrder.length) return defaults;
+                    // 서버 저장 순서를 최우선으로. 순서에 없는 새 키는 기본 순서대로 뒤에 붙는다.
+                    const byKey = new Map(defaults.map(item => [item.key, item]));
+                    const ordered = this.serviceOrder.map(key => byKey.get(key)).filter(Boolean);
+                    return [...ordered, ...defaults.filter(item => !this.serviceOrder.includes(item.key))];
+                },
+                serviceGridClass() {
+                    // 카드 크기가 한 줄에 들어갈 개수를 결정한다 (작을수록 많이).
+                    if (this.cardSize === 'sm') return 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3 svc-size-sm';
+                    if (this.cardSize === 'lg') return 'grid-cols-1 md:grid-cols-2 gap-6';
+                    return 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5';
                 },
                 anyServiceVisible() {
                     return this.serviceVisibilityEntries.some(item => this.serviceVisible(item.key));
                 },
                 visibleAgentDefs() {
                     return this.agentServiceDefs.filter(agent => this.serviceVisible(agent.key));
+                },
+                llamaPresetSlots() {
+                    return Object.entries(this.presets || {}).map(([name, preset]) => ({
+                        name,
+                        model: String(preset?.model || ''),
+                        modelName: preset?.model ? this.getDirName(preset.model) : '모델 미지정'
+                    }));
+                },
+                activeDockServices() {
+                    const definitions = [
+                        { key:'bot', label:'Telegram Bot', log:'bot', logo:'telegram', icon:'send', mark:'TG', web:false },
+                        { key:'watcher', label:'Local Watcher', log:'watcher', icon:'eye', mark:'W', web:true },
+                        { key:'unsloth', label:'Unsloth Studio', log:'unsloth', logo:'unsloth', icon:'bolt', mark:'U', web:true },
+                        { key:'pi', label:'PI', log:'pi', logo:'pi', icon:'mark', mark:'PI', web:false },
+                        { key:'pi_web', label:'PI Web', log:'pi_web', logo:'pi_web', icon:'mark', mark:'PW', web:true },
+                        { key:'paseo', label:'Paseo', log:'paseo', logo:'paseo', icon:'mark', mark:'P', web:true },
+                        { key:'omp', label:'OMP', log:'omp', logo:'omp', icon:'mark', mark:'O', web:false },
+                        { key:'omp_web', label:'OMP Web', log:'omp_web', logo:'omp', icon:'mark', mark:'OW', web:true },
+                        { key:'deepseek_harness', label:'DSH', log:'deepseek_harness', logo:'dsh', icon:'mark', mark:'DSH', web:true },
+                        { key:'comfyui', label:'ComfyUI · 메인', log:'comfyui', logo:'comfy', icon:'nodes', mark:'C', web:true },
+                        { key:'comfyui_gpu1', label:'ComfyUI · GPU1', log:'comfyui_gpu1', logo:'comfy', icon:'nodes', mark:'C1', web:true },
+                        { key:'llama', label:'Llama.cpp', log:'llamacpp', logo:'llama', icon:'llama', mark:'L', web:false },
+                        { key:'vllm', label:'vLLM', log:'vllm', logo:'vllm', icon:'vllm', mark:'V', web:false },
+                    ];
+                    const drift = Math.max(0, Math.floor((this.serviceClock - this.serviceStatusFetchedAt) / 1000));
+                    return definitions
+                        .filter(item => this.serviceStates[item.key]?.running)
+                        .map(item => {
+                            const state = this.serviceStates[item.key] || {};
+                            const base = state.ready ? state.ready_uptime : state.uptime;
+                            return { ...item, ...state, webUrl: item.web ? this.serviceDockWebUrl(item.key) : '', uptime: Number(base || 0) + drift };
+                        });
                 },
                 activeTermTab() {
                     const tab = this.terminal.tabs.find(t => t.id === this.terminal.activeTab);
@@ -1705,6 +1902,9 @@
                     const rawHost = window.location.hostname;
                     const host = rawHost.includes(':') && !rawHost.startsWith('[') ? `[${rawHost}]` : rawHost;
                     return `${window.location.protocol}//${host}:${Number(port)}`;
+                },
+                serviceLogoName(key) {
+                    return ({ pi:'pi', pi_web:'pi_web', paseo:'paseo', omp:'omp', omp_web:'omp' })[key] || key;
                 },
                 agentServiceUrl(agent) {
                     return this.agentServiceUrls[agent.key] || this.serviceUrl(this.servicePorts[agent.key]);
@@ -2391,6 +2591,8 @@
                         const res = await fetch('/api/status');
                         const d = await res.json();
                         const svc = d.services || {};
+                        this.serviceStates = { ...svc };
+                        this.serviceStatusFetchedAt = Date.now();
                         this.status = {
                             comfyui: !!(svc.comfyui && svc.comfyui.running),
                             comfyui_gpu1: !!(svc.comfyui_gpu1 && svc.comfyui_gpu1.running),
@@ -2491,6 +2693,91 @@
                         this.serviceVisibilityBusy[key] = false;
                     }
                 },
+
+                // ---------- 서비스 카드 레이아웃: 순서 + 전체 크기 (서버 저장) ----------
+                cardOrder(key) {
+                    const i = this.serviceOrder.indexOf(key);
+                    return i >= 0 ? (i + 1) * 10 : 999;
+                },
+                async fetchServiceLayout() {
+                    const defaults = this.serviceVisibilityEntries.map(item => item.key);
+                    try {
+                        const res = await fetch('/api/service-layout');
+                        const d = await res.json();
+                        const saved = Array.isArray(d.order) ? d.order.filter(k => defaults.includes(k)) : [];
+                        this.serviceOrder = [...saved, ...defaults.filter(k => !saved.includes(k))];
+                        if (['sm', 'md', 'lg'].includes(d.size)) this.cardSize = d.size;
+                    } catch (e) {
+                        this.serviceOrder = defaults.slice();   // 기본 순서/크기 사용
+                    }
+                },
+                saveServiceLayout() {
+                    clearTimeout(this.layoutSaveTimer);
+                    this.layoutSaveTimer = setTimeout(async () => {
+                        try {
+                            const res = await fetch('/api/service-layout', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ order: this.serviceOrder, size: this.cardSize })
+                            });
+                            if (!res.ok) throw new Error('save failed');
+                        } catch (e) {
+                            alert('카드 순서/크기를 서버에 저장하지 못했습니다. 다시 시도해 주세요.');
+                        }
+                    }, 250);
+                },
+                setCardSize(key) {
+                    if (this.cardSize === key) return;
+                    this.cardSize = key;
+                    this.saveServiceLayout();
+                },
+                toggleServiceOrderEditing() {
+                    this.serviceOrderEditing = !this.serviceOrderEditing;
+                },
+                moveServiceOrder(key, delta) {
+                    const list = this.serviceOrder;
+                    const from = list.indexOf(key);
+                    const to = from + delta;
+                    if (from < 0 || to < 0 || to >= list.length) return;
+                    list.splice(from, 1);
+                    list.splice(to, 0, key);
+                    this.saveServiceLayout();
+                },
+                // Pointer 기반 드래그 정렬 — 마우스/터치 공통. 6px 이상 움직여야
+                // 드래그로 보고, 단순 탭/클릭(화살표 버튼 등)과 구분한다.
+                onOrderChipDown(event, key) {
+                    if (event.pointerType === 'mouse' && event.button !== 0) return;
+                    if (event.target.closest && event.target.closest('button')) return;
+                    this.orderDrag = { key, pointerId: event.pointerId, x: event.clientX, y: event.clientY, active: false };
+                    if (event.currentTarget.setPointerCapture) {
+                        try { event.currentTarget.setPointerCapture(event.pointerId); } catch (e) {}
+                    }
+                },
+                onOrderChipMove(event) {
+                    const d = this.orderDrag;
+                    if (!d || d.pointerId !== event.pointerId || d.key !== event.currentTarget.dataset.orderKey) return;
+                    if (!d.active) {
+                        if (Math.abs(event.clientX - d.x) < 6 && Math.abs(event.clientY - d.y) < 6) return;
+                        d.active = true;
+                    }
+                    event.preventDefault();
+                    const hit = document.elementFromPoint(event.clientX, event.clientY);
+                    const chip = hit && hit.closest ? hit.closest('[data-order-key]') : null;
+                    const targetKey = chip ? chip.dataset.orderKey : '';
+                    if (!targetKey || targetKey === d.key) return;
+                    const list = this.serviceOrder;
+                    const from = list.indexOf(d.key), to = list.indexOf(targetKey);
+                    if (from < 0 || to < 0) return;
+                    list.splice(from, 1);
+                    list.splice(to, 0, d.key);
+                },
+                onOrderChipUp(event) {
+                    const d = this.orderDrag;
+                    if (!d || d.pointerId !== event.pointerId) return;
+                    const wasActive = d.active;
+                    this.orderDrag = { key: '', pointerId: -1, x: 0, y: 0, active: false };
+                    if (wasActive) this.saveServiceLayout();
+                },
                 async setAllServiceVisibility(value) {
                     const entries = this.serviceVisibilityEntries;
                     for (const item of entries) {
@@ -2516,6 +2803,72 @@
                     }
                 },
 
+                // ---------- llama.cpp 프로필/명령 슬롯 카드 ----------
+                openLlamaConfigurator() {
+                    this.llamaConfigModal.show = true;
+                    document.body.classList.add('modal-open');
+                },
+                closeLlamaConfigurator() {
+                    this.llamaConfigModal.show = false;
+                    if (!this.logModal.show && !this.comfyArgsModal.show) document.body.classList.remove('modal-open');
+                },
+                async runLlamaPreset(name) {
+                    if (this.status.llamacpp || this.loading.llamacpp || this.llamaCommandRunning) return;
+                    this.selectedPreset = name;
+                    this.loadPreset();
+                    await this.startLlama();
+                },
+                async fetchLlamaCommandSlots() {
+                    try {
+                        const res = await fetch('/api/llama/command-slots');
+                        const d = await res.json();
+                        this.llamaCommandSlots = Array.isArray(d.slots) ? d.slots : [];
+                    } catch (e) { }
+                },
+                toggleLlamaCommandEditor() {
+                    if (!this.llamaCommandEditing) this.llamaCommandDraft = this.llamaCommandSlots.map(slot => ({ ...slot }));
+                    this.llamaCommandEditing = !this.llamaCommandEditing;
+                },
+                addLlamaCommandSlot() {
+                    this.llamaCommandDraft.push({ id: '', name: '', command: '' });
+                },
+                removeLlamaCommandSlot(index) {
+                    this.llamaCommandDraft.splice(index, 1);
+                },
+                async saveLlamaCommandSlots() {
+                    const slots = this.llamaCommandDraft
+                        .filter(slot => (slot.command || '').trim())
+                        .map(slot => ({ id: slot.id || '', name: (slot.name || '').trim(), command: slot.command.trim() }));
+                    this.llamaCommandSlotsSaving = true;
+                    try {
+                        const res = await fetch('/api/llama/command-slots', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slots })
+                        });
+                        const d = await res.json().catch(() => ({}));
+                        if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
+                        this.llamaCommandSlots = Array.isArray(d.slots) ? d.slots : [];
+                        this.llamaCommandEditing = false;
+                    } catch (e) {
+                        alert(`llama.cpp 명령 슬롯 저장 실패: ${e.message}`);
+                    }
+                    this.llamaCommandSlotsSaving = false;
+                },
+                async runLlamaCommandSlot(slot) {
+                    if (this.status.llamacpp || this.loading.llamacpp || this.llamaCommandRunning) return;
+                    this.llamaCommandRunning = true;
+                    try {
+                        const res = await fetch('/api/llama/command-slots/run', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: slot.id })
+                        });
+                        const d = await res.json().catch(() => ({}));
+                        if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
+                    } catch (e) {
+                        alert(`llama.cpp 실행 실패: ${e.message}`);
+                    }
+                    this.llamaCommandRunning = false;
+                    await this.fetchStatus();
+                },
+
                 // ---------- vLLM 슬롯 카드 ----------
                 async fetchVllmSlots() {
                     try {
@@ -2529,10 +2882,48 @@
                     this.vllmEditing = !this.vllmEditing;
                 },
                 addVllmSlot() {
-                    this.vllmDraft.push({ id: '', name: `슬롯 ${this.vllmDraft.length + 1}`, command: '' });
+                    // 이름은 비워 두고 placeholder로 유도 — 저장 시 비어 있으면 서버가 '슬롯 N'으로 채웁니다.
+                    this.vllmDraft.push({ id: '', name: '', command: '' });
                 },
                 removeVllmSlot(index) {
                     this.vllmDraft.splice(index, 1);
+                },
+                startVllmRename(slot) {
+                    this.vllmRenameId = slot.id;
+                    this.vllmRenameValue = slot.name || '';
+                    this.$nextTick(() => {
+                        // v-for 안의 ref는 배열로 수집될 수 있어 양쪽 형태 모두 처리.
+                        let el = this.$refs.vllmRenameInput;
+                        if (Array.isArray(el)) el = el[0];
+                        if (el) { el.focus(); el.select(); }
+                    });
+                },
+                cancelVllmRename() {
+                    this.vllmRenameId = '';
+                    this.vllmRenameValue = '';
+                },
+                async commitVllmRename(slot) {
+                    if (this.vllmRenameId !== slot.id) return;   // 이미 취소됨
+                    const name = (this.vllmRenameValue || '').trim().slice(0, 80);
+                    this.vllmRenameId = '';
+                    this.vllmRenameValue = '';
+                    if (!name || name === slot.name) return;
+                    const slots = this.vllmSlots.map(s => s.id === slot.id ? { ...s, name } : s);
+                    this.vllmRenaming = true;
+                    try {
+                        const res = await fetch('/api/vllm/slots', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ slots })
+                        });
+                        const d = await res.json().catch(() => ({}));
+                        if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
+                        this.vllmSlots = Array.isArray(d.slots) ? d.slots : slots;
+                    } catch (e) {
+                        alert(`제목 변경 실패: ${e.message}`);
+                    } finally {
+                        this.vllmRenaming = false;
+                    }
                 },
                 async saveVllmSlots() {
                     // 빈 명령어 슬롯은 서버에서도 걸러지지만, 여기선 미리 정리해 보냅니다.
@@ -2557,6 +2948,7 @@
                 },
                 async runVllmSlot(slot) {
                     if (this.status.vllm || this.vllmRunning) return;
+                    const actionGeneration = ++this.vllmActionGeneration;
                     this.vllmRunning = true;
                     try {
                         const res = await fetch('/api/vllm/slots/run', {
@@ -2567,21 +2959,28 @@
                         const d = await res.json().catch(() => ({}));
                         if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
                     } catch (e) {
-                        alert(`vLLM 실행 실패: ${e.message}`);
+                        if (actionGeneration === this.vllmActionGeneration) alert(`vLLM 실행 실패: ${e.message}`);
                     }
-                    this.vllmRunning = false;
-                    await this.fetchStatus();
+                    if (actionGeneration === this.vllmActionGeneration) {
+                        this.vllmRunning = false;
+                        await this.fetchStatus();
+                    }
                 },
                 async stopVllm() {
+                    const actionGeneration = ++this.vllmActionGeneration;
                     this.vllmStopping = true;
+                    this.vllmRunning = false;
                     try {
                         const res = await fetch('/api/vllm/stop', { method: 'POST' });
-                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                        const data = await res.json().catch(() => ({}));
+                        if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
                     } catch (e) {
-                        alert('vLLM 종료 실패');
+                        if (actionGeneration === this.vllmActionGeneration) alert(`vLLM 종료 실패: ${e.message}`);
                     }
-                    this.vllmStopping = false;
-                    await this.fetchStatus();
+                    if (actionGeneration === this.vllmActionGeneration) {
+                        this.vllmStopping = false;
+                        await this.fetchStatus();
+                    }
                 },
                 async copyVllmApiUrl() {
                     const url = `${this.serviceUrl(this.servicePorts.vllm)}/v1`;
@@ -2824,12 +3223,56 @@
                     this.logModal.show = true;
                     this.logModal.content = 'Waiting for stream...';
                     this.logModal.autoScroll = true;
+                    this.logModal.shown = 0;
+                    this.logModal.pending = 0;
                     document.body.classList.add('modal-open');
 
                     this.fetchLogs();
                     this.fetchHardware();
                     this.logTimer = setInterval(this.fetchLogs, 1000);
                     this.hwTimer = setInterval(this.fetchHardware, 5000);
+                },
+                openServiceDockLog(service) {
+                    if (this.memo.show) this.closeMemo();
+                    if (this.terminal.show) this.closeTerminalPanel();
+                    this.openLogModal(service.log);
+                },
+                serviceDockWebUrl(key) {
+                    if (key === 'watcher') return this.serviceUrl(8888);
+                    if (key === 'unsloth') return this.serviceUrl(this.servicePorts.unsloth);
+                    if (key === 'deepseek_harness') return this.deepseekHarnessUrl || this.serviceUrl(this.servicePorts.deepseekHarness);
+                    if (key === 'comfyui' || key === 'comfyui_gpu1') {
+                        const instanceKey = key === 'comfyui_gpu1' ? 'gpu1' : 'main';
+                        const instance = this.comfyInstances.find(item => item.key === instanceKey);
+                        return this.serviceUrl(instance?.port || (instanceKey === 'gpu1' ? 8189 : 8188));
+                    }
+                    if (['pi_web', 'paseo', 'omp_web'].includes(key)) {
+                        return this.agentServiceUrls[key] || this.serviceUrl(this.servicePorts[key]);
+                    }
+                    return '';
+                },
+                openServiceDockPrimary(service) {
+                    if (!service.web) {
+                        this.openServiceDockLog(service);
+                        return;
+                    }
+                    if (!service.ready || !service.webUrl) return;
+                    window.open(service.webUrl, '_blank', 'noopener,noreferrer');
+                },
+                formatServiceUptime(seconds) {
+                    const total = Math.max(0, Math.floor(Number(seconds) || 0));
+                    const days = Math.floor(total / 86400);
+                    const hours = Math.floor((total % 86400) / 3600);
+                    const minutes = Math.floor((total % 3600) / 60);
+                    if (days) return `${days}d ${hours}h`;
+                    if (hours) return `${hours}h ${minutes}m`;
+                    if (minutes) return `${minutes}m ${total % 60}s`;
+                    return `${total}s`;
+                },
+                serviceDockTitle(service) {
+                    const phase = service.ready ? '서비스 준비 완료' : '로딩 중';
+                    const action = service.web ? (service.ready ? '클릭해서 WebUI 열기' : 'WebUI 준비 중 · >_로 로그 보기') : '클릭해서 로그 열기';
+                    return `${service.label} · ${phase} · ${this.formatServiceUptime(service.uptime)} · ${action}`;
                 },
                 closeLogModal() {
                     this.logModal.show = false;
@@ -2843,24 +3286,45 @@
                         const apiName = this.logModal.server === 'llamacpp' ? 'llama' : this.logModal.server;
                         const res = await fetch(`/api/logs/${apiName}?lines=600&t=${new Date().getTime()}`);
                         const data = await res.json();
-                        const text = (data.lines || []).join('\n');
-
+                        const lines = data.lines || [];
+                        // 사용자가 스크롤을 올려 읽는 중이면 화면을 교체하지 않고
+                        // 새 줄 수만 세어 둔다 — 선택/복사가 흔들리지 않는다.
+                        if (!this.logModal.autoScroll) {
+                            this.logModal.pending = Math.max(0, lines.length - this.logModal.shown);
+                            return;
+                        }
+                        const text = lines.join('\n') || "Waiting for stream...";
+                        this.logModal.shown = lines.length;
+                        this.logModal.pending = 0;
                         if (this.logModal.content !== text) {
-                            this.logModal.content = text || "Waiting for stream...";
-                            if (this.logModal.autoScroll) {
-                                this.$nextTick(() => {
-                                    const container = document.getElementById('log-terminal');
-                                    if (container) container.scrollTop = container.scrollHeight;
-                                });
-                            }
+                            this.logModal.content = text;
+                            this.$nextTick(() => {
+                                const container = document.getElementById('log-terminal');
+                                if (container) container.scrollTop = container.scrollHeight;
+                            });
                         }
                     } catch(e) {}
+                },
+                // 터미널 스크롤백 뷰어와 동일한 라이브 추적 규칙:
+                // 위로 스크롤하면 추적 해제(읽기 고정), 바닥까지 내리면 자동 재개.
+                onLogModalScroll(event) {
+                    const el = event.target;
+                    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 24;
+                    if (atBottom === this.logModal.autoScroll) return;
+                    this.logModal.autoScroll = atBottom;
+                    if (atBottom) this.fetchLogs();   // 바닥에 닿으면 즉시 최신 반영
+                },
+                resumeLogLive() {
+                    this.logModal.autoScroll = true;
+                    this.fetchLogs();
                 },
                 async clearLog() {
                     try {
                         const apiName = this.logModal.server === 'llamacpp' ? 'llama' : this.logModal.server;
                         await fetch(`/api/clear_log/${apiName}`, { method: 'POST' });
                         this.logModal.content = "Buffer cleared.\n";
+                        this.logModal.shown = 0;
+                        this.logModal.pending = 0;
                     } catch(e) {}
                 },
 
@@ -2918,6 +3382,9 @@
                     this.terminal.wide = (forceWide === undefined) ? this.terminal.wide : forceWide;
                     this.terminal.show = true;
                     this.terminal.paused = false;
+                    this.terminal.autoScroll = true;
+                    this.terminal.shownLines = 0;
+                    this.terminal.pending = 0;
                     this.refreshTerminalSessions();
                     this.fetchTerminal();
                     this.startTerminalPolling();
@@ -2971,16 +3438,36 @@
                         const res = await fetch(`/api/terminal/main?lines=400&t=${Date.now()}`);
                         if (!res.ok) return;
                         const data = await res.json();
-                        this.terminal.lines = (data.lines || []).map(l =>
+                        const lines = (data.lines || []).map(l =>
                             (typeof l === 'string') ? { t: '', s: l } : { t: l.t || '', s: l.s || '' }
                         );
-                        if (this.terminal.autoScroll) {
-                            this.$nextTick(() => {
-                                const el = document.getElementById('terminal-log');
-                                if (el) el.scrollTop = el.scrollHeight;
-                            });
+                        // 사용자가 스크롤을 올려 읽는 중이면 리스트를 교체하지 않고
+                        // 새 줄 수만 세어 둔다 — 선택/복사가 흔들리지 않는다.
+                        if (!this.terminal.autoScroll) {
+                            this.terminal.pending = Math.max(0, lines.length - this.terminal.shownLines);
+                            return;
                         }
+                        this.terminal.shownLines = lines.length;
+                        this.terminal.pending = 0;
+                        this.terminal.lines = lines;
+                        this.$nextTick(() => {
+                            const el = document.getElementById('terminal-log');
+                            if (el) el.scrollTop = el.scrollHeight;
+                        });
                     } catch(e) {}
+                },
+                // 터미널 스크롤백 뷰어와 동일한 라이브 추적 규칙:
+                // 위로 스크롤하면 추적 해제(읽기 고정), 바닥까지 내리면 자동 재개.
+                onTerminalLogScroll(event) {
+                    const el = event.target;
+                    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 24;
+                    if (atBottom === this.terminal.autoScroll) return;
+                    this.terminal.autoScroll = atBottom;
+                    if (atBottom) this.fetchTerminal();   // 바닥에 닿으면 즉시 최신 반영
+                },
+                resumeTerminalLive() {
+                    this.terminal.autoScroll = true;
+                    this.fetchTerminal();
                 },
 
                 // ---------- tmux 웹 터미널 탭 ----------
@@ -3354,7 +3841,9 @@
                 },
                 onGlobalKeydown(event) {
                     if (event.key !== 'Escape') return;
+                    if (this.logModal.show) { this.closeLogModal(); return; }
                     if (this.terminal.history.open) { this.closeHistoryViewer(); return; }
+                    if (this.llamaConfigModal.show) { this.closeLlamaConfigurator(); return; }
                     if (this.memo.show) this.closeMemo();
                     if (this.terminal.show) this.closeTerminalPanel();
                 },
@@ -3371,7 +3860,6 @@
                 },
 
                 async controlServer(server, action, instance = 'main') {
-                    const launchTab = (server === 'deepseek_harness' && action === 'start') ? window.open('about:blank', '_blank') : null;
                     const instKey = instance || 'main';
                     const instLabel = (this.comfyInstances.find(i => i.key === instKey) || {}).label || 'ComfyUI';
                     if (server === 'comfyui' && action === 'stop' && !confirm(`${instLabel} 작업을 종료하시겠습니까? 진행 중인 생성 작업이 중단될 수 있습니다.`)) return;
@@ -3402,14 +3890,15 @@
                         const res = await fetch(`/api/${pathServer}/${action}${query}`, fetchOptions);
                         const responseData = await res.json().catch(() => ({}));
                         if (!res.ok) throw new Error(responseData.detail || `HTTP ${res.status}`);
-                        if (launchTab && responseData.launch_url) launchTab.location.replace(responseData.launch_url);
-                        else if (launchTab) launchTab.close();
+                        // HTTP 200인데 ok:false면 상태가 안 바뀐 것 — 조용히 넘어가면 '무반응' 버그가 됩니다.
+                        if (responseData && responseData.ok === false) {
+                            throw new Error(responseData.detail || '서비스 상태가 바뀌지 않았습니다 (프로세스를 찾지 못했거나 이미 종료된 상태일 수 있습니다)');
+                        }
                         setTimeout(async () => {
                             await this.fetchStatus();
                             this.loading[server] = false;
                         }, 3000);
                     } catch (e) {
-                        if (launchTab) launchTab.close();
                         this.loading[server] = false;
                         alert("Request failed: " + e.message);
                     }
@@ -3693,7 +4182,9 @@
             },
             async mounted() {
                 await this.fetchServiceVisibility();
+                await this.fetchServiceLayout();
                 await this.fetchVllmSlots();
+                await this.fetchLlamaCommandSlots();
                 await this.loadPresetsFromServer();
                 await this.loadLastRun();
                 await this.loadLlamaSettings();
@@ -3728,6 +4219,7 @@
                         this.fetchOsBoot();
                     }
                 }, 5000);
+                setInterval(() => { this.serviceClock = Date.now(); }, 1000);
 
                 // Esc: 열린 플로팅 패널(메모/터미널) 닫기
                 document.addEventListener('keydown', this.onGlobalKeydown);

@@ -9,6 +9,7 @@ import re
 import shlex
 import shutil
 import signal
+import socket
 import struct
 import subprocess
 import sys
@@ -64,7 +65,9 @@ NO_WINDOW = subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0
 PRESETS_FILE = os.path.join(BASE_DIR, "presets.json")
 MEMO_FILE = os.path.join(BASE_DIR, "memo.txt")
 SERVICE_VISIBILITY_FILE = os.path.join(BASE_DIR, "service_visibility.json")
+SERVICE_LAYOUT_FILE = os.path.join(BASE_DIR, "service_layout.json")
 VLLM_SLOTS_FILE = os.path.join(BASE_DIR, "vllm_slots.json")
+LLAMA_COMMAND_SLOTS_FILE = os.path.join(BASE_DIR, "llama_command_slots.json")
 COMYFUI_SETTINGS_FILE = os.path.join(BASE_DIR, "comfyui_settings.json")
 HW_HISTORY_FILE = os.path.join(BASE_DIR, "hw_history.json")
 GPU_THERMAL_EVENTS_FILE = os.path.join(BASE_DIR, "gpu_thermal_events.json")
@@ -104,6 +107,9 @@ _catalog_scan_inflight = False
 _sampler_started = threading.Event()
 _startup_state_lock = threading.Lock()
 _manager_update_lock = threading.Lock()
+_service_ready_lock = threading.Lock()
+_service_ready_tracking = {}
+_vllm_stop_lock = threading.Lock()
 _startup_state = {
     "ready": False,
     "phase": "starting",
@@ -1648,6 +1654,7 @@ _VENDORED_FILES = {
     "xterm.js": ("application/javascript; charset=utf-8", "xterm 5.5.0"),
     "addon-fit.js": ("application/javascript; charset=utf-8", "addon-fit 0.10.0"),
     "xterm.css": ("text/css; charset=utf-8", "xterm-css 5.5.0"),
+    "vllm-logo.svg": ("image/svg+xml", "official vLLM compact logo"),
 }
 
 
@@ -1681,6 +1688,55 @@ def vendored(name: str):
         # 버전에 pin된 불변 파일: 브라우저는 강하게 캐시할 수 있다
         headers={"Cache-Control": "public, max-age=86400, immutable"},
     )
+
+
+@app.get("/service-icon/{name}")
+def service_icon(name: str):
+    """설치된 각 서비스가 배포하는 공식 favicon/logo만 제한적으로 제공한다."""
+    runtime_root = os.path.expanduser(
+        "~/.local/share/main-server/deepseek-harness/runtime/node-*/lib/node_modules"
+    )
+    sources = {
+        "telegram": [os.path.join(BASE_DIR, "vendor", "telegram-logo.svg")],
+        "vllm": [os.path.join(BASE_DIR, "vendor", "vllm-logo.svg")],
+        "pi": [os.path.join(BASE_DIR, "vendor", "pi-logo.svg")],
+        "pi_web": [os.path.join(runtime_root, "@jmfederico/pi-web/dist/client/favicon.svg")],
+        "paseo": [os.path.join(
+            runtime_root,
+            "@getpaseo/cli/node_modules/@getpaseo/server/dist/server/web-ui/"
+            "assets/assets/images/favicon-dark.*.png",
+        )],
+        "omp": [os.path.join(runtime_root, "@kahme247/ompweb/public/icon.png")],
+        "dsh": [os.path.expanduser(
+            "~/.local/share/pnpm/store/v11/links/@deepseek-ai/dsh-web-frontend/"
+            "*/**/node_modules/@deepseek-ai/dsh-web-frontend/dist/favicon.svg"
+        )],
+        "unsloth": [os.path.expanduser(
+            "~/.unsloth/studio/unsloth_studio/lib/python*/site-packages/"
+            "studio/frontend/dist/circle-logo-small.png"
+        )],
+        "comfy": [os.path.join(
+            str(settings.get("comfyui_dir") or ""),
+            "venv/lib/python*/site-packages/comfyui_frontend_package/static/"
+            "assets/images/comfy-logo-single.svg",
+        )],
+        "llama": [
+            os.path.expanduser("~/llama.cpp/media/llama1-icon-transparent.svg"),
+            os.path.expanduser("~/.unsloth/llama.cpp/media/llama1-icon-transparent.svg"),
+        ],
+    }
+    patterns = sources.get(name)
+    if not patterns:
+        raise HTTPException(404, "Unknown service icon")
+    candidates = []
+    for pattern in patterns:
+        candidates.extend(sorted(glob.glob(pattern, recursive=True), reverse=True))
+    path = next((candidate for candidate in candidates if os.path.isfile(candidate)), "")
+    if not path:
+        raise HTTPException(404, f"{name} service icon is not installed")
+    suffix = os.path.splitext(path)[1].lower()
+    media_type = {".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon"}.get(suffix)
+    return FileResponse(path, media_type=media_type, headers={"Cache-Control": "no-store"})
 
 
 
@@ -1786,6 +1842,14 @@ def _service_state(name):
             st["running"] = True
             st["pid"] = pids[0]
             st["external"] = True
+    if name == "vllm":
+        st["run_id"] = getattr(svc, "run_id", None)
+        st["container_id"] = _vllm_container_id()
+        if st["container_id"] and not st["running"]:
+            # A Docker container is a running server resource from the moment
+            # it exists, even before the vLLM Python process/health port does.
+            st["running"] = True
+            st["external"] = True
     if name == "unsloth":
         executable = _unsloth_executable()
         st["available"] = bool(executable)
@@ -1848,6 +1912,86 @@ def _service_state(name):
                 st["pid"] = pids[0]
                 st["external"] = True
                 st["launch_url"] = _deepseek_harness_launch_url()
+
+    # pidfile 밖에서 발견한 프로세스도 도크에서 실제 실행 시간을 표시할 수 있게 한다.
+    if st["running"] and st.get("pid") and not st.get("uptime"):
+        try:
+            st["uptime"] = max(0, round(time.time() - psutil.Process(st["pid"]).create_time()))
+        except (psutil.Error, OSError, ValueError):
+            pass
+
+    # running은 프로세스 생성 여부이고 ready는 실제 서비스 포트가 요청을 받을 수
+    # 있는지다. 포트가 없는 백그라운드 작업(bot)은 프로세스 생존을 준비 완료로 본다.
+    ready_port = None
+    if name in ("comfyui", "comfyui_gpu1"):
+        ready_port = _comfy_port("main" if name == "comfyui" else "gpu1")
+    elif name == "llama":
+        ready_port = getattr(services["llama"], "ready_port", None)
+        if ready_port is None:
+            last_run = _read_json(LAST_RUN_FILE, {})
+            try:
+                ready_port = _llama_port_value(last_run) if last_run else LLAMA_PORT
+            except HTTPException:
+                ready_port = LLAMA_PORT
+    elif name == "vllm":
+        try:
+            ready_port = int(getattr(svc, "ready_port", None) or settings.get("vllm_port") or 8000)
+        except (TypeError, ValueError):
+            ready_port = 8000
+    elif name == "watcher":
+        ready_port = 8888
+    elif name == "unsloth":
+        ready_port = _unsloth_port()
+    elif name in ("pi", "pi_web", "paseo", "omp", "omp_web"):
+        ready_port = _agent_service_port(name)
+    elif name == "deepseek_harness":
+        ready_port = _deepseek_harness_port()
+
+    ready = False
+    if st["running"]:
+        if name == "deepseek_harness":
+            # DSH는 로컬 포트뿐 아니라 일회성 URL/Tailscale 연결까지 끝나야
+            # 카드의 Web UI가 실제로 열리므로 기존의 더 엄격한 준비 기준을 유지한다.
+            ready = bool(st.get("launch_url"))
+        elif name == "vllm":
+            # Docker의 publish 포트는 컨테이너 안 vLLM이 모델을 읽기 전에도 TCP
+            # 연결을 받아 버린다. 공식 health 응답이 200일 때만 API 준비 완료다.
+            try:
+                response = requests.get(f"http://127.0.0.1:{ready_port}/health", timeout=0.5)
+                ready = response.status_code == 200
+            except requests.RequestException:
+                ready = False
+        elif ready_port is None:
+            ready = True
+        else:
+            try:
+                with socket.create_connection(("127.0.0.1", ready_port), timeout=0.15):
+                    ready = True
+            except OSError:
+                ready = False
+    st["ready"] = ready
+    if st.get("phase") != "stopping":
+        st["phase"] = "ready" if ready else ("starting" if st["running"] else "stopped")
+    # 로딩 중에는 프로세스 시작 후 경과시간, 준비 후에는 실제 API가 준비된 뒤의
+    # 서비스 시간을 따로 제공한다. 기존 서비스는 manager 재시작 시 프로세스
+    # 시작시각을 안전한 근사값으로 사용해 시간이 갑자기 0이 되지 않게 한다.
+    now = time.time()
+    pid = st.get("pid")
+    with _service_ready_lock:
+        tracked = _service_ready_tracking.get(name)
+        if ready:
+            if not tracked or tracked.get("pid") != pid:
+                process_started_at = now - max(0, float(st.get("uptime") or 0))
+                ready_at = process_started_at if process_started_at < STARTED_AT - 2 else now
+                tracked = {"pid": pid, "ready_at": ready_at}
+                _service_ready_tracking[name] = tracked
+            st["ready_uptime"] = max(0, round(now - tracked["ready_at"]))
+        else:
+            if not st["running"] or (tracked and tracked.get("pid") != pid):
+                _service_ready_tracking.pop(name, None)
+            st["ready_uptime"] = 0
+    if ready_port is not None:
+        st["port"] = ready_port
     return st
 
 
@@ -2079,6 +2223,7 @@ def llama_start(preset: dict):
     cmd = _build_llama_cmd(effective)
     devices = normalize_gpu_devices(effective.get("gpuDevices") or effective.get("device") or [])
     pid = services["llama"].start(cmd, device=devices or None)
+    services["llama"].ready_port = _llama_port_value(effective)
     _write_json(
         LAST_RUN_FILE,
         {"version": _resolve_llama_binary(effective)[1] or "", **effective, "gpuDevices": devices, "device": ""},
@@ -2092,6 +2237,84 @@ def llama_start(preset: dict):
         "gpu_devices": devices,
         "warnings": [],
     }
+
+
+# ---------- llama.cpp 명령 슬롯 (프리셋과 별개인 완성 실행 명령어) ----------
+
+LLAMA_COMMAND_SLOT_LIMIT = 20
+
+
+def _llama_command_slots_load():
+    loaded = _read_json(LLAMA_COMMAND_SLOTS_FILE, {})
+    raw = loaded.get("slots") if isinstance(loaded, dict) else None
+    slots = []
+    if isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            command = str(item.get("command") or "").strip()
+            if not command:
+                continue
+            slot_id = str(item.get("id") or "").strip() or uuid.uuid4().hex[:8]
+            name = str(item.get("name") or "").strip() or f"명령 슬롯 {len(slots) + 1}"
+            slots.append({"id": slot_id, "name": name[:80], "command": command[:8000]})
+    return slots[:LLAMA_COMMAND_SLOT_LIMIT]
+
+
+def _llama_command_slots_save(slots):
+    _write_json(LLAMA_COMMAND_SLOTS_FILE, {"slots": slots})
+
+
+@app.get("/api/llama/command-slots")
+def llama_command_slots_get():
+    return {"slots": _llama_command_slots_load()}
+
+
+@app.post("/api/llama/command-slots")
+def llama_command_slots_save(data: dict):
+    incoming = data.get("slots") if isinstance(data, dict) else None
+    if not isinstance(incoming, list):
+        raise HTTPException(400, "slots(목록)가 필요합니다")
+    slots = []
+    seen_ids = set()
+    for item in incoming[:LLAMA_COMMAND_SLOT_LIMIT]:
+        if not isinstance(item, dict):
+            continue
+        command = str(item.get("command") or "").strip()
+        if not command:
+            continue
+        slot_id = str(item.get("id") or "").strip() or uuid.uuid4().hex[:8]
+        if slot_id in seen_ids:
+            slot_id = uuid.uuid4().hex[:8]
+        seen_ids.add(slot_id)
+        name = str(item.get("name") or "").strip() or f"명령 슬롯 {len(slots) + 1}"
+        slots.append({"id": slot_id, "name": name[:80], "command": command[:8000]})
+    _llama_command_slots_save(slots)
+    return {"ok": True, "slots": slots}
+
+
+@app.post("/api/llama/command-slots/run")
+def llama_command_slot_run(data: dict):
+    if _service_state("llama")["running"]:
+        raise HTTPException(409, "llama.cpp가 이미 실행 중입니다. 먼저 Stop하세요")
+    slot_id = str((data or {}).get("id") or "").strip()
+    slot = next((item for item in _llama_command_slots_load() if item["id"] == slot_id), None)
+    if not slot:
+        raise HTTPException(404, "슬롯을 찾지 못했습니다")
+    command = ["cmd", "/c", slot["command"]] if IS_WINDOWS else ["/bin/bash", "-lc", slot["command"]]
+    path_parts = [p for p in (os.path.expanduser("~/.local/bin"), os.environ.get("PATH", "")) if p]
+    try:
+        pid = services["llama"].start(command, env={"PATH": os.pathsep.join(dict.fromkeys(path_parts))})
+    except RuntimeError as error:
+        raise HTTPException(409, str(error))
+    port_match = re.search(r"(?:^|\s)--port(?:=|\s+)(\d+)(?:\s|$)", slot["command"])
+    services["llama"].ready_port = int(port_match.group(1)) if port_match else LLAMA_PORT
+    threading.Thread(target=lambda: vram_arbiter.arbiter.reconcile("llama-command-slot-start"), daemon=True).start()
+    time.sleep(0.8)
+    if not services["llama"].running() and not _service_state("llama")["running"]:
+        detail = "\n".join(tail(services["llama"].log_file, 20))
+        raise HTTPException(500, detail or "실행 직후 프로세스가 종료되었습니다. 명령어와 로그를 확인하세요")
+    return {"ok": True, "pid": pid, "slot": {"id": slot["id"], "name": slot["name"]}}
 
 
 @app.post("/api/llama/stop")
@@ -3058,6 +3281,9 @@ def watcher_stop():
 
 @app.post("/api/unsloth/start")
 def unsloth_start():
+    # 상태 표시와 동일하게 외부 인스턴스까지 '실행 중'으로 보고 이중 실행(포트 충돌)을 막습니다.
+    if _service_state("unsloth")["running"]:
+        raise HTTPException(409, "Unsloth Studio가 이미 실행 중입니다. 먼저 Stop하세요")
     executable = _unsloth_executable()
     if not executable:
         raise HTTPException(400, f"Unsloth CLI 실행 파일이 없습니다: {settings.get('unsloth_executable')}")
@@ -3224,11 +3450,60 @@ def deepseek_harness_settings_save(data: dict):
     return agent_service_settings_save("dsh", data)
 
 
+def _unsloth_stop(force=False):
+    """Unsloth Studio 종료: pidfile 관리 프로세스 우선, 없으면 외부 감지(setsid 등)로 폴백.
+
+    상태 표시가 find_process 정규식으로 '실행 중'으로 보여주는 프로세스를
+    중지 버튼이 반드시 죽이도록, 종료 경로가 같은 탐지식을 공유합니다."""
+    svc = services["unsloth"]
+    if svc.running():
+        return svc.force_kill() if force else svc.stop()
+    pids = find_process(r"unsloth(?:\.exe)?\s+studio(?:\s|$)")
+    if not pids:
+        return False
+    killed = False
+    if IS_WINDOWS:
+        for pid in pids:
+            done = subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                capture_output=True, creationflags=NO_WINDOW,
+            )
+            killed = killed or done.returncode == 0
+    else:
+        sig = signal.SIGKILL if force else signal.SIGTERM
+        own_pgid = os.getpgid(0)
+        for pid in pids:
+            try:
+                pgid = os.getpgid(pid)
+                if pgid != own_pgid:
+                    os.killpg(pgid, sig)
+                else:
+                    os.kill(pid, sig)
+            except (OSError, ProcessLookupError):
+                try:
+                    os.kill(pid, sig)
+                except (OSError, ProcessLookupError):
+                    continue
+            killed = True
+    if killed:
+        # 외부 인스턴스가 죽었으니 지난 관리 세대의 낡은 pidfile는 정리합니다.
+        try:
+            os.remove(svc._pidfile)
+        except OSError:
+            pass
+        svc.pid = None
+        svc.started_at = None
+    return killed
+
+
 @app.post("/api/unsloth/stop")
 def unsloth_stop(request: Request):
     if request.headers.get("X-Unsloth-Stop-Confirm") != "confirmed":
         raise HTTPException(409, "Unsloth 작업 종료 확인이 필요합니다")
-    return {"ok": services["unsloth"].stop()}
+    if not _unsloth_stop(force=False):
+        # 조용한 ok:false는 UI에서 '무반응'으로 보였습니다. 명시적 오류로 알립니다.
+        raise HTTPException(409, "종료할 Unsloth Studio 프로세스를 찾지 못했습니다 (이미 종료된 것 같습니다)")
+    return {"ok": True}
 
 
 # ---------- DeepSeek Harness (loopback Web UI exposed through Tailscale Serve) ----------
@@ -3357,6 +3632,47 @@ def service_visibility_save(data: dict):
     return {"ok": True, "visibility": state}
 
 
+# ---------- 서비스 카드 레이아웃 (카드 순서 + 전체 크기, JSON 영속화) ----------
+
+SERVICE_CARD_SIZES = ("sm", "md", "lg")
+
+
+def _service_layout_load():
+    layout = {"order": list(SERVICE_CARD_KEYS), "size": "md"}
+    try:
+        with open(SERVICE_LAYOUT_FILE, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+        if isinstance(loaded, dict):
+            saved = [k for k in (loaded.get("order") or []) if k in SERVICE_CARD_KEYS]
+            # 저장 이후 새로 생긴 키는 기본 순서대로 뒤에 붙인다.
+            layout["order"] = saved + [k for k in SERVICE_CARD_KEYS if k not in saved]
+            if loaded.get("size") in SERVICE_CARD_SIZES:
+                layout["size"] = loaded["size"]
+    except (FileNotFoundError, OSError, ValueError):
+        pass
+    return layout
+
+
+@app.get("/api/service-layout")
+def service_layout_get():
+    return _service_layout_load()
+
+
+@app.post("/api/service-layout")
+def service_layout_save(data: dict):
+    # 부분 저장 허용: 보낸 필드만 갱신하고 나머지는 서버 저장값을 유지합니다.
+    layout = _service_layout_load()
+    if isinstance(data, dict):
+        if isinstance(data.get("order"), list):
+            incoming = [k for k in data["order"] if k in SERVICE_CARD_KEYS]
+            layout["order"] = incoming + [k for k in layout["order"] if k not in incoming]
+        if data.get("size") in SERVICE_CARD_SIZES:
+            layout["size"] = data["size"]
+    with open(SERVICE_LAYOUT_FILE, "w", encoding="utf-8") as f:
+        json.dump(layout, f, ensure_ascii=False, indent=2)
+    return {"ok": True, **layout}
+
+
 # ---------- vLLM 슬롯 카드 (완성된 실행 명령어를 슬롯에 저장해 실행) ----------
 
 VLLM_SLOT_LIMIT = 20
@@ -3375,7 +3691,7 @@ def _vllm_slots_load():
             if not command:
                 continue
             slot_id = str(item.get("id") or "").strip() or uuid.uuid4().hex[:8]
-            name = str(item.get("name") or "").strip() or command.splitlines()[0][:40]
+            name = str(item.get("name") or "").strip() or f"슬롯 {len(slots) + 1}"
             slots.append({"id": slot_id, "name": name[:80], "command": command[:8000]})
     return slots[:VLLM_SLOT_LIMIT]
 
@@ -3383,6 +3699,48 @@ def _vllm_slots_load():
 def _vllm_slots_save(slots):
     with open(VLLM_SLOTS_FILE, "w", encoding="utf-8") as f:
         json.dump({"slots": slots}, f, ensure_ascii=False, indent=2)
+
+
+def _prepare_vllm_slot_command(raw_command):
+    """Attach durable identity to a simple Docker-backed slot command."""
+    run_id = uuid.uuid4().hex
+    if IS_WINDOWS or "--cidfile" in raw_command or not re.search(r"(?<![\w.-])docker\s+run\b", raw_command):
+        return raw_command, run_id, None
+    cidfile = os.path.join(os.path.dirname(services["vllm"].log_file), f"vllm-{run_id}.cid")
+    insertion = (
+        f"docker run --cidfile {shlex.quote(cidfile)} "
+        f"--label main-server.vllm-run={shlex.quote(run_id)}"
+    )
+    prepared = re.sub(r"(?<![\w.-])docker\s+run\b", insertion, raw_command, count=1)
+    return prepared, run_id, cidfile
+
+
+def _vllm_command_port(raw_command):
+    patterns = (
+        r"(?:^|\s)--port(?:=|\s+)(\d+)(?:\s|$)",
+        r"(?:^|\s)-p\s+(?:[\w.:-]+:)?(\d+):\d+(?:/tcp)?(?:\s|$)",
+        r"(?:^|\s)-e\s+PORT=(\d+)(?:\s|$)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, raw_command)
+        if match:
+            return int(match.group(1))
+    try:
+        return int(settings.get("vllm_port") or 8000)
+    except (TypeError, ValueError):
+        return 8000
+
+
+def _vllm_systemd_unit(raw_command):
+    if not re.search(r"(?:^|\s)systemd-run(?:\s|$)", raw_command):
+        return None
+    match = re.search(r"(?:^|\s)--unit(?:=|\s+)([\w@.-]+)", raw_command)
+    return match.group(1) if match else None
+
+
+def _vllm_container_name(raw_command):
+    match = re.search(r"(?:^|\s)--name(?:=|\s+)([^\s\\]+)", raw_command)
+    return match.group(1).strip("'\"") if match else None
 
 
 @app.get("/api/vllm/slots")
@@ -3408,7 +3766,8 @@ def vllm_slots_save(data: dict):
         if slot_id in seen_ids:
             slot_id = uuid.uuid4().hex[:8]
         seen_ids.add(slot_id)
-        name = str(item.get("name") or "").strip() or command.splitlines()[0][:40]
+        # 이름을 비우면 순번 기반 '슬롯 N'으로 채워 구분 가능한 제목을 보장합니다.
+        name = str(item.get("name") or "").strip() or f"슬롯 {len(slots) + 1}"
         slots.append({"id": slot_id, "name": name[:80], "command": command[:8000]})
     _vllm_slots_save(slots)
     return {"ok": True, "slots": slots}
@@ -3426,47 +3785,332 @@ def vllm_slot_run(data: dict):
         raise HTTPException(404, "슬롯을 찾지 못했습니다")
     if IS_WINDOWS:
         command = ["cmd", "/c", slot["command"]]
+        run_id = uuid.uuid4().hex
+        cidfile = None
     else:
-        command = ["/bin/bash", "-lc", slot["command"]]
+        prepared, run_id, cidfile = _prepare_vllm_slot_command(slot["command"])
+        command = ["/bin/bash", "-lc", prepared]
     # 맨손 PATH에서는 venv의 vllm이 안 잡힐 수 있어 vLLM venv와 ~/.local/bin을 PATH에 ahead.
     venv_bin = os.path.join(str(settings.get("vllm_env") or ""), "bin")
     path_parts = [p for p in (venv_bin, os.path.expanduser("~/.local/bin"), os.environ.get("PATH", "")) if p]
-    env = {"PATH": os.pathsep.join(dict.fromkeys(path_parts))}
+    env = {"PATH": os.pathsep.join(dict.fromkeys(path_parts)), "MAIN_SERVER_VLLM_RUN_ID": run_id}
+    svc = services["vllm"]
+    with svc._lock:
+        previous_run_id = getattr(svc, "run_id", None)
+        previous_cidfile = getattr(svc, "container_id_file", None)
+        previous_container_sudo = getattr(svc, "container_uses_sudo", False)
+        previous_ready_port = getattr(svc, "ready_port", None)
+        previous_systemd_unit = getattr(svc, "systemd_unit", None)
+        previous_container_name = getattr(svc, "container_name", None)
+        svc.run_id = run_id
+        svc.container_id_file = cidfile
+        svc.container_uses_sudo = bool(re.search(r"\bsudo\s+(?:-\S+\s+)*docker\s+run\b", slot["command"]))
+        svc.ready_port = _vllm_command_port(slot["command"])
+        svc.systemd_unit = _vllm_systemd_unit(slot["command"])
+        svc.container_name = _vllm_container_name(slot["command"])
+        try:
+            pid = svc.start(command, env=env)
+        except RuntimeError as error:
+            svc.run_id = previous_run_id
+            svc.container_id_file = previous_cidfile
+            svc.container_uses_sudo = previous_container_sudo
+            svc.ready_port = previous_ready_port
+            svc.systemd_unit = previous_systemd_unit
+            svc.container_name = previous_container_name
+            raise HTTPException(409, str(error))
+        except Exception:
+            svc.run_id = previous_run_id
+            svc.container_id_file = previous_cidfile
+            svc.container_uses_sudo = previous_container_sudo
+            svc.ready_port = previous_ready_port
+            svc.systemd_unit = previous_systemd_unit
+            svc.container_name = previous_container_name
+            raise
+    # Return as soon as Popen and the pidfile exist. Readiness is deliberately
+    # asynchronous; from this point onward the UI must already be able to Stop.
+    return {
+        "ok": True, "pid": pid, "generation": svc.generation, "run_id": run_id,
+        "phase": "starting", "slot": {"id": slot["id"], "name": slot["name"]},
+    }
+
+
+def _vllm_detected_pids():
+    return set(find_process(r"vllm\s+serve|vllm\.entrypoints\.openai"))
+
+
+def _vllm_listener_pids():
     try:
-        pid = services["vllm"].start(command, env=env)
-    except RuntimeError as error:
-        raise HTTPException(409, str(error))
-    time.sleep(0.8)
-    if not services["vllm"].running() and not _service_state("vllm")["running"]:
-        detail = "\n".join(tail(services["vllm"].log_file, 20))
-        raise HTTPException(500, detail or "실행 직후 프로세스가 종료되었습니다. 명령어와 로그를 확인하세요")
-    return {"ok": True, "pid": pid, "slot": {"id": slot["id"], "name": slot["name"]}}
+        port = int(getattr(services["vllm"], "ready_port", None) or settings.get("vllm_port") or 8000)
+    except (TypeError, ValueError):
+        port = 8000
+    found = set()
+    try:
+        for connection in psutil.net_connections(kind="inet"):
+            if connection.status == psutil.CONN_LISTEN and connection.laddr.port == port and connection.pid:
+                found.add(connection.pid)
+    except (psutil.AccessDenied, OSError):
+        pass
+    return found
+
+
+def _vllm_container_ids():
+    found = set()
+    cidfile = getattr(services["vllm"], "container_id_file", None)
+    if cidfile:
+        try:
+            with open(cidfile, encoding="utf-8") as handle:
+                container_id = handle.read().strip()
+                if container_id:
+                    found.add(container_id)
+        except OSError:
+            pass
+
+    # Recover identity for a container launched before this manager process or
+    # before cidfile tracking existed. containerd-shim is the host parent of the
+    # vLLM init process and carries the full Docker container ID in its argv.
+    for pid in _vllm_detected_pids():
+        try:
+            process = psutil.Process(pid)
+            for ancestor in process.parents():
+                argv = [str(item) for item in ancestor.cmdline()]
+                if "containerd-shim" not in " ".join(argv):
+                    continue
+                if "-id" in argv:
+                    value = argv[argv.index("-id") + 1]
+                    if re.fullmatch(r"[0-9a-f]{12,64}", value):
+                        found.add(value)
+                break
+            with open(f"/proc/{pid}/cgroup", encoding="utf-8", errors="replace") as handle:
+                for value in re.findall(r"[0-9a-f]{64}", handle.read()):
+                    found.add(value)
+        except (IndexError, OSError, psutil.Error):
+            continue
+    found.update(_docker_vllm_container_ids())
+    return found
+
+
+def _configured_vllm_container_names():
+    names = set()
+    for slot in _vllm_slots_load():
+        match = re.search(r"(?:^|\s)--name(?:=|\s+)([^\s\\]+)", slot.get("command", ""))
+        if match:
+            names.add(match.group(1).strip("'\""))
+    tracked = getattr(services["vllm"], "container_name", None)
+    if tracked:
+        names.add(tracked)
+    return names
+
+
+def _docker_vllm_container_ids():
+    """Find a running slot container even before its vLLM process is ready."""
+    docker = shutil.which("docker")
+    if not docker:
+        return set()
+    prefixes = [[docker]]
+    sudo = shutil.which("sudo")
+    if sudo:
+        prefixes.insert(0, [sudo, "-n", docker])
+    configured_names = _configured_vllm_container_names()
+    for prefix in prefixes:
+        try:
+            completed = subprocess.run(
+                [*prefix, "ps", "--no-trunc", "--format", "{{.ID}}\t{{.Names}}\t{{.Labels}}"],
+                capture_output=True, text=True, timeout=5, creationflags=NO_WINDOW,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if completed.returncode != 0:
+            continue
+        found = set()
+        for line in completed.stdout.splitlines():
+            parts = line.split("\t", 2)
+            if len(parts) < 2:
+                continue
+            container_id, name = parts[:2]
+            labels = parts[2] if len(parts) > 2 else ""
+            if name in configured_names or "main-server.vllm-run=" in labels:
+                found.add(container_id)
+        return found
+    return set()
+
+
+def _vllm_container_id():
+    ids = _vllm_container_ids()
+    return sorted(ids)[0] if ids else None
+
+
+def _stop_vllm_container(container_id, force=False):
+    docker = shutil.which("docker")
+    if not docker or not container_id:
+        return False
+    prefixes = [[docker]]
+    sudo = shutil.which("sudo")
+    if sudo:
+        if getattr(services["vllm"], "container_uses_sudo", False):
+            prefixes.insert(0, [sudo, "-n", docker])
+        else:
+            prefixes.append([sudo, "-n", docker])
+    for prefix in prefixes:
+        command = [*prefix, "kill" if force else "stop"]
+        if not force:
+            command.extend(["--time", "6"])
+        command.append(container_id)
+        try:
+            completed = subprocess.run(command, capture_output=True, text=True, timeout=10, creationflags=NO_WINDOW)
+            if completed.returncode != 0:
+                continue
+            inspected = subprocess.run(
+                [*prefix, "inspect", "--format", "{{.State.Running}}", container_id],
+                capture_output=True, text=True, timeout=5, creationflags=NO_WINDOW,
+            )
+            # Removed containers and explicitly stopped containers are both gone.
+            stopped = inspected.returncode != 0 or inspected.stdout.strip().lower() == "false"
+            if stopped:
+                cidfile = getattr(services["vllm"], "container_id_file", None)
+                if cidfile:
+                    try:
+                        with open(cidfile, encoding="utf-8") as handle:
+                            tracked_id = handle.read().strip()
+                        if tracked_id == container_id:
+                            os.remove(cidfile)
+                    except OSError:
+                        pass
+            return stopped
+        except (OSError, subprocess.SubprocessError):
+            continue
+    if not force:
+        return _stop_vllm_container(container_id, force=True)
+    return False
+
+
+def _stop_vllm_systemd_unit():
+    unit = getattr(services["vllm"], "systemd_unit", None)
+    systemctl = shutil.which("systemctl")
+    if not unit or not systemctl:
+        return None
+    try:
+        active = subprocess.run(
+            [systemctl, "--user", "is-active", "--quiet", unit],
+            capture_output=True, timeout=3, creationflags=NO_WINDOW,
+        ).returncode == 0
+        if active:
+            stopped = subprocess.run(
+                [systemctl, "--user", "stop", unit],
+                capture_output=True, timeout=10, creationflags=NO_WINDOW,
+            ).returncode == 0
+            return stopped
+        return True
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _terminate_process_trees(pids, force=False):
+    targets = {}
+    for pid in pids:
+        try:
+            process = psutil.Process(pid)
+            targets[process.pid] = process
+            for child in process.children(recursive=True):
+                targets[child.pid] = child
+        except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+            continue
+    method = "kill" if force else "terminate"
+    for process in sorted(targets.values(), key=lambda item: item.pid, reverse=True):
+        try:
+            getattr(process, method)()
+        except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+            pass
+    if targets:
+        _, alive = psutil.wait_procs(list(targets.values()), timeout=0 if force else 6)
+        for process in alive:
+            try:
+                process.kill()
+            except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+                pass
+        if alive:
+            psutil.wait_procs(alive, timeout=2)
+    return bool(targets)
 
 
 def _vllm_stop(force=False):
-    """vLLM 종료. 우리가 pidfile로 관리하는 프로세스 우선, 없으면 외부 감지 프로세스로 폴백.
+    """Cancel the current run and verify process/container/port teardown.
 
-    외부 vllm serve는 보통 자체 프로세스 그룹으로 뜨므로 그룹에 신호를 보내
-    engine 자식 프로세스까지 함께 내립니다."""
-    svc = services["vllm"]
-    if svc.running():
-        return svc.force_kill() if force else svc.stop()
-    pid = _service_state("vllm").get("pid")
-    if not pid:
-        return False
-    try:
-        os.killpg(os.getpgid(pid), signal.SIGKILL if force else signal.SIGTERM)
-    except (OSError, ProcessLookupError):
-        try:
-            os.kill(pid, signal.SIGKILL if force else signal.SIGTERM)
-        except (OSError, ProcessLookupError):
-            return False
-    return True
+    A container's host-side init command also contains the vLLM argv, so the
+    external tree fallback covers Docker launches even when the shell wrapper
+    or docker client has already exited.
+    """
+    with _vllm_stop_lock:
+        svc = services["vllm"]
+        found = svc.running()
+        if found:
+            svc.force_kill() if force else svc.stop()
+
+        unit_result = _stop_vllm_systemd_unit()
+        if unit_result is not None:
+            found = True
+
+        container_ids = _vllm_container_ids()
+        container_ok = True
+        if container_ids:
+            found = True
+            container_ok = all([_stop_vllm_container(item, force=force) for item in container_ids])
+
+        # A launcher may daemonize or move an engine child out of the original
+        # group. Terminate every remaining vLLM tree, then apply KILL fallback.
+        remaining = _vllm_detected_pids()
+        if remaining:
+            found = True
+            _terminate_process_trees(remaining, force=force)
+
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            # Docker creation can finish just after Stop killed its launcher.
+            # Re-read the cidfile/ancestry throughout the cancellation window.
+            late_containers = _vllm_container_ids()
+            if late_containers:
+                found = True
+                late_results = [_stop_vllm_container(item, force=force) for item in late_containers]
+                container_ok = container_ok and all(late_results)
+            time.sleep(0.1)
+        leftovers = _vllm_detected_pids()
+        if leftovers:
+            _terminate_process_trees(leftovers, force=True)
+
+        stopped = (
+            container_ok and unit_result is not False
+            and not _vllm_container_ids() and not _vllm_detected_pids() and not _vllm_listener_pids()
+        )
+        if stopped:
+            # Clear only after verification. Service._clear_run has the same
+            # generation/PID guard for its managed path.
+            stale_pid = svc.read_pidfile()
+            if stale_pid and not svc._process_tree_alive(stale_pid):
+                try:
+                    os.remove(svc._pidfile)
+                except OSError:
+                    pass
+            svc.phase = "stopped"
+            cidfile = getattr(svc, "container_id_file", None)
+            if cidfile:
+                try:
+                    os.remove(cidfile)
+                except OSError:
+                    pass
+            svc.container_id_file = None
+            svc.run_id = None
+            svc.container_uses_sudo = False
+            svc.systemd_unit = None
+            svc.container_name = None
+        return bool(found) and stopped
 
 
 @app.post("/api/vllm/stop")
 def vllm_slot_stop():
-    return {"ok": _vllm_stop(force=False)}
+    # Stop is an unconditional emergency action for this card. It must not wait
+    # for health/readiness and Docker receives KILL immediately.
+    if not _vllm_stop(force=True):
+        raise HTTPException(409, "vLLM 종료를 확인하지 못했습니다. 프로세스 또는 포트 listener를 확인하세요")
+    return {"ok": True, "phase": "stopped"}
 
 
 @app.get("/api/logs")
@@ -4328,6 +4972,8 @@ def panic(request: Request):
                 results[name] = False
         elif name == "vllm":
             results[name] = _vllm_stop(force=True)
+        elif name == "unsloth":
+            results[name] = _unsloth_stop(force=True)
         else:
             results[name] = svc.stop()
             if name == "omp_web":
@@ -4348,6 +4994,9 @@ def force_kill(server: str, request: Request):
     elif server == "vllm":
         # 슬롯 런처로 띄운 경우뿐 아니라 infrastructure/외부에서 뜬 vLLM도 잡도록 폴백.
         killed = _vllm_stop(force=True)
+    elif server == "unsloth":
+        # setsid/nohup처럼 manager 밖에서 뜬 인스턴스도 Kill 버튼으로 정리되도록 폴백.
+        killed = _unsloth_stop(force=True)
     else:
         killed = services[server].force_kill()
         if server == "omp_web":
