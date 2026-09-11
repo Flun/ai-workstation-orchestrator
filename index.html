@@ -108,6 +108,7 @@
             <div class="flex flex-wrap gap-3 w-full sm:w-auto">
                 <a href="/model-hub" class="px-3 py-2 text-sm font-medium border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 rounded-lg transition shadow-sm">Model Hub</a>
                 <a href="/media" class="px-3 py-2 text-sm font-medium border border-pink-500/30 bg-pink-500/10 hover:bg-pink-500/20 text-pink-300 rounded-lg transition shadow-sm">Media Studio</a>
+                <a href="/llm-bench" class="px-3 py-2 text-sm font-medium border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 rounded-lg transition shadow-sm">LLM Benchmark</a>
                 <a href="/dataset" class="px-3 py-2 text-sm font-medium border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 rounded-lg transition shadow-sm">Dataset</a>
                 <a href="/vast" class="px-3 py-2 text-sm font-medium border border-sky-500/30 bg-sky-500/10 hover:bg-sky-500/20 text-sky-300 rounded-lg transition shadow-sm">Vast Remote</a>
                 <a href="/infrastructure" class="px-3 py-2 text-sm font-medium border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 rounded-lg transition shadow-sm">통합 환경</a>
@@ -354,10 +355,14 @@
                         <template v-if="motherboardFansExpanded"><p class="mt-1 text-[11px] text-zinc-600">선택한 메인보드 PWM 채널을 GPU 메모리 온도에 따라 제어합니다. 15초 lease가 끊기면 메인보드 기본 모드로 자동 복귀합니다.</p><p v-if="motherboardFans.message" class="mt-1 text-[11px]" :class="motherboardFans.conflict ? 'text-amber-400' : 'text-zinc-500'">{{ motherboardFans.message }}</p></template>
                     </div>
                     <div class="flex flex-wrap items-center gap-2 text-[10px]">
-                        <span class="rounded border px-2 py-1" :class="motherboardFans.runtime?.active ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-zinc-700 text-zinc-500'">
-                            <template v-if="motherboardFans.runtime?.control_mode === 'manual'">{{ motherboardFans.runtime?.active ? `수동 ${manualFanName} → ${motherboardFans.runtime.target_percent}% · ${fanChannelSummary(motherboardFans.runtime.manual_channel_id)}` : '수동 대기' }}</template>
-                            <template v-else><template v-if="motherboardFans.runtime?.profiles?.gpu?.active">GPU HBM {{ motherboardFans.runtime.profiles.gpu.temperature ?? '--' }}°C → {{ motherboardFans.runtime.profiles.gpu.target_percent }}% · {{ fanChannelSummary(motherboardFans.runtime.profiles.gpu.channel_id) }}<template v-if="motherboardFansExpanded"> · {{ motherboardFans.runtime.profiles.gpu.curve_mode === 'step' ? '계단식' : '선형' }}<template v-if="motherboardFans.runtime.profiles.gpu.target_percent !== motherboardFans.runtime.profiles.gpu.calculated_percent"> (계산 {{ motherboardFans.runtime.profiles.gpu.calculated_percent }}% · {{ motherboardFans.runtime.profiles.gpu.hold_reason === 'hysteresis' ? '히스테리시스 대기' : `감속 ${motherboardFans.runtime.profiles.gpu.down_delay_remaining}초` }})</template></template></template><template v-else>GPU 자동 꺼짐</template></template>
-                        </span>
+                        <span v-if="motherboardFans.runtime?.control_mode === 'manual'" class="rounded border px-2 py-1" :class="motherboardFans.runtime?.active ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-zinc-700 text-zinc-500'">{{ motherboardFans.runtime?.active ? `수동 테스트 ${Object.keys(motherboardFans.runtime.manual_targets || {}).length}개 채널` : '수동 대기' }}</span>
+                        <template v-else>
+                            <span v-for="chip in motherboardFanGpuChips" :key="chip.uuid" class="rounded border px-2 py-1" :class="chip.state.active ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-zinc-700 text-zinc-500'">
+                                <template v-if="chip.state.active">{{ chip.label }} HBM {{ chip.state.temperature ?? '--' }}°C → {{ chip.state.target_percent }}% · {{ fanChannelSummary(chip.state.channel_id) }}<template v-if="motherboardFansExpanded"> · {{ chip.state.curve_mode === 'step' ? '계단식' : '선형' }}<template v-if="chip.state.target_percent !== chip.state.calculated_percent"> (계산 {{ chip.state.calculated_percent }}% · {{ chip.state.hold_reason === 'hysteresis' ? '히스테리시스 대기' : `감속 ${chip.state.down_delay_remaining}초` }})</template></template></template>
+                                <template v-else>{{ chip.label }} HBM {{ chip.enabled ? (chip.state.error || '자동 대기') : '꺼짐' }}</template>
+                            </span>
+                            <span v-if="!motherboardFanGpuChips.length" class="rounded border border-zinc-700 px-2 py-1 text-zinc-500">GPU 자동 꺼짐</span>
+                        </template>
                         <span v-if="motherboardFans.runtime?.control_mode !== 'manual' && motherboardFans.runtime?.profiles?.cpu?.active" class="rounded border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-sky-300">CPU {{ motherboardFans.runtime.profiles.cpu.temperature ?? '--' }}°C → {{ motherboardFans.runtime.profiles.cpu.target_percent }}% · {{ fanChannelSummary(motherboardFans.runtime.profiles.cpu.channel_id) }}</span>
                         <span v-if="motherboardFansExpanded && motherboardFans.pawnio_version" class="rounded border border-zinc-700 px-2 py-1 text-zinc-500">PawnIO {{ motherboardFans.pawnio_version }}</span>
                         <button @click="motherboardFansExpanded=!motherboardFansExpanded" class="shrink-0 rounded border border-zinc-700 bg-zinc-800/60 px-2.5 py-1 text-[10px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200">{{ motherboardFansExpanded ? '접기' : '펼치기' }}</button>
@@ -374,20 +379,25 @@
                         <span class="rounded border border-amber-500/30 px-2 py-1 text-[10px] text-amber-300">자동 HBM 제어 일시정지</span>
                     </div>
                     <div class="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                        <button v-for="fan in motherboardFans.channels" :key="fan.id" @click="motherboardFanManualChannel=fan.id" class="rounded-lg border p-3 text-left transition" :class="motherboardFanManualChannel === fan.id ? 'border-amber-400 bg-amber-500/10' : 'border-zinc-700 bg-zinc-950/50 hover:border-zinc-500'">
-                            <div class="flex items-center justify-between gap-2"><span class="text-xs font-semibold" :class="motherboardFanManualChannel === fan.id ? 'text-amber-200' : 'text-zinc-300'">{{ fan.name }}</span><span v-if="motherboardFans.runtime?.manual_channel_id === fan.id" class="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] text-emerald-300">제어 중</span></div>
+                        <button v-for="fan in motherboardFans.channels" :key="fan.id" @click="selectManualMotherboardFan(fan)" class="rounded-lg border p-3 text-left transition" :class="motherboardFanManualChannel === fan.id ? 'border-amber-400 bg-amber-500/10' : 'border-zinc-700 bg-zinc-950/50 hover:border-zinc-500'">
+                            <div class="flex items-center justify-between gap-2"><span class="text-xs font-semibold" :class="motherboardFanManualChannel === fan.id ? 'text-amber-200' : 'text-zinc-300'">{{ fan.name }}</span><span v-if="motherboardFans.runtime?.manual_targets?.[fan.id] != null" class="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] text-emerald-300">{{ motherboardFans.runtime.manual_targets[fan.id] }}% 유지 중</span></div>
                             <div class="mt-2 font-mono text-lg" :class="fan.rpm != null ? 'text-zinc-100' : 'text-zinc-600'">{{ fan.rpm != null ? Math.round(fan.rpm) : '--' }} <span class="text-[10px] text-zinc-600">RPM</span></div>
                         </button>
                     </div>
                     <div class="mt-4 flex flex-wrap items-end gap-3">
-                        <label class="min-w-56 flex-1 text-[10px] text-zinc-500">수동 PWM · {{ motherboardFanManualPercent }}%<input type="range" v-model.number="motherboardFanManualPercent" min="20" max="100" step="1" class="mt-3 w-full accent-amber-400"></label>
-                        <input type="number" v-model.number="motherboardFanManualPercent" min="20" max="100" class="input-base w-20 text-right">
+                        <label class="min-w-56 flex-1 text-[10px] text-zinc-500">수동 PWM · {{ motherboardFanManualPercent }}%<input type="range" v-model.number="motherboardFanManualPercent" min="0" max="100" step="1" class="mt-3 w-full accent-amber-400"></label>
+                        <input type="number" v-model.number="motherboardFanManualPercent" min="0" max="100" class="input-base w-20 text-right">
                         <button @click="applyManualMotherboardFan" :disabled="motherboardFanSaving || !motherboardFanManualChannel" class="rounded bg-amber-500 px-4 py-2 text-xs font-semibold text-zinc-950 hover:bg-amber-400 disabled:opacity-40">선택 팬에 적용</button>
                         <button @click="resetMotherboardFans" :disabled="motherboardFanSaving" class="rounded border border-zinc-700 px-3 py-2 text-xs text-zinc-400 hover:bg-zinc-800 disabled:opacity-40">팬 제어 잠시 해제</button>
                     </div>
-                    <p class="mt-3 text-[10px] text-amber-300/70">주의: 펌프 채널일 수 있으므로 RPM을 확인하면서 낮추세요. 20%보다 낮은 값은 막아 두었고, 채널 자체의 하한이 더 높으면 하드웨어 하한으로 자동 보정됩니다.</p>
+                    <p class="mt-3 text-[10px] text-amber-300/70">채널별로 적용한 PWM은 테스트 모드를 종료할 때까지 동시에 유지됩니다. 주의: 0%는 팬을 완전히 멈출 수 있으므로 펌프 채널에는 사용하지 마세요.</p>
                 </div>
                 <div v-else class="mt-3">
+                  <div class="mb-3 flex flex-wrap gap-2">
+                    <button v-for="(profile, uuid) in motherboardFans.settings?.gpu_profiles || {}" :key="uuid" @click="motherboardFanEdit.gpu_uuid=uuid; selectMotherboardFanGpu()" :disabled="motherboardFanSaving" class="rounded border border-indigo-500/30 px-3 py-2 text-xs text-indigo-300">
+                      {{ gpuTuning.gpus.find(gpu => gpu.uuid === uuid)?.index != null ? 'GPU ' + gpuTuning.gpus.find(gpu => gpu.uuid === uuid).index : uuid }} → {{ fanChannelSummary(profile.channel_id) }} · {{ profile.enabled ? '자동 사용' : '꺼짐' }}
+                    </button>
+                  </div>
                   <div class="grid gap-3 lg:grid-cols-2">
                     <div class="rounded border border-zinc-800 p-3">
                         <div class="grid gap-3 sm:grid-cols-2">
@@ -405,7 +415,7 @@
                                 </select>
                             </label>
                             <label class="text-[10px] text-zinc-500">연결 GPU
-                                <select v-model="motherboardFanEdit.gpu_uuid" class="input-base mt-1 w-full">
+                                <select v-model="motherboardFanEdit.gpu_uuid" @change="selectMotherboardFanGpu" class="input-base mt-1 w-full">
                                     <option value="">선택하세요</option>
                                     <option v-for="gpu in gpuTuning.gpus" :key="gpu.uuid" :value="gpu.uuid">GPU {{ gpu.index }} · {{ gpu.profile === 'cmp_170hx' ? 'CMP 170HX' : gpu.name }}</option>
                                 </select>
@@ -747,29 +757,8 @@
                     </div>
                 </div>
 
-                <div v-if="llamaCommandEditing" class="mb-3 space-y-3 rounded-lg border border-indigo-500/30 bg-zinc-950/50 p-3">
-                    <p class="text-[10px] leading-relaxed text-zinc-500">완성된 llama.cpp 실행 명령어를 그대로 저장합니다. Linux에서는 <span class="font-mono text-zinc-400">bash -lc</span>로 실행됩니다.</p>
-                    <div v-if="!llamaCommandDraft.length" class="py-1 text-center text-[10px] text-zinc-600">명령 슬롯이 없습니다.</div>
-                    <div v-for="(slot, index) in llamaCommandDraft" :key="slot.id || ('llama-draft-' + index)" class="space-y-1.5 rounded-lg border border-zinc-800 bg-zinc-900/60 p-2.5">
-                        <div class="flex items-center gap-2">
-                            <span class="shrink-0 text-[9px] font-semibold text-zinc-600">{{ index + 1 }}</span>
-                            <input v-model.trim="slot.name" maxlength="80" placeholder="슬롯 이름" class="input-base min-w-0 flex-1 text-xs font-medium">
-                            <button @click="removeLlamaCommandSlot(index)" class="shrink-0 rounded border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-zinc-500 transition hover:border-rose-900/50 hover:text-rose-400" title="슬롯 삭제">
-                                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                            </button>
-                        </div>
-                        <textarea v-model="slot.command" rows="2" placeholder="완성된 llama-server 실행 명령어" class="input-base w-full font-mono text-[11px]" spellcheck="false"></textarea>
-                    </div>
-                    <div class="flex items-center justify-between gap-2 pt-1">
-                        <button @click="addLlamaCommandSlot" class="rounded-lg border border-dashed border-zinc-700 px-3 py-1.5 text-[11px] text-zinc-400 transition hover:border-indigo-500/40 hover:text-indigo-300">+ 슬롯 추가</button>
-                        <div class="flex gap-2">
-                            <button @click="llamaCommandEditing = false" class="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-[11px] text-zinc-400 transition hover:bg-zinc-700">취소</button>
-                            <button @click="saveLlamaCommandSlots" :disabled="llamaCommandSlotsSaving" class="rounded-lg bg-indigo-600 px-3 py-1.5 text-[11px] font-medium text-white transition hover:bg-indigo-500 disabled:opacity-40">{{ llamaCommandSlotsSaving ? '저장 중...' : '슬롯 저장' }}</button>
-                        </div>
-                    </div>
-                </div>
-
-                <div v-else class="mb-4 space-y-3">
+                <!-- 설정/프로필 + 명령 슬롯 목록 (명령 슬롯 편집은 대형 모달) -->
+                <div class="mb-4 space-y-3">
                     <div>
                         <div class="mb-1.5 flex items-center justify-between"><span class="text-[9px] font-semibold uppercase tracking-widest text-zinc-600">Profile Slots</span><button @click="openLlamaConfigurator" class="text-[10px] text-indigo-400 transition hover:text-indigo-300">설정/프로필 관리</button></div>
                         <div v-if="!llamaPresetSlots.length" class="rounded-lg border border-dashed border-zinc-800 px-3 py-3 text-center text-[11px] text-zinc-600">저장된 프로필이 없습니다.</div>
@@ -781,8 +770,8 @@
                         </div>
                     </div>
                     <div>
-                        <div class="mb-1.5 flex items-center justify-between"><span class="text-[9px] font-semibold uppercase tracking-widest text-zinc-600">Command Slots</span><button @click="toggleLlamaCommandEditor" class="text-[10px] text-indigo-400 transition hover:text-indigo-300">명령 슬롯 관리</button></div>
-                        <div v-if="!llamaCommandSlots.length" class="rounded-lg border border-dashed border-zinc-800 px-3 py-3 text-center text-[11px] text-zinc-600">직접 실행 명령 슬롯이 없습니다.</div>
+                        <div class="mb-1.5 flex items-center justify-between"><span class="text-[9px] font-semibold uppercase tracking-widest text-zinc-600">Command Slots</span><button @click="openLlamaCommandEditor" class="text-[10px] text-indigo-400 transition hover:text-indigo-300">명령 슬롯 편집</button></div>
+                        <div v-if="!llamaCommandSlots.length" class="rounded-lg border border-dashed border-zinc-800 px-3 py-3 text-center text-[11px] text-zinc-600">직접 실행 명령 슬롯이 없습니다. <span class="text-indigo-300">명령 슬롯 편집</span>에서 추가하세요.</div>
                         <div v-else class="space-y-1.5">
                             <button v-for="slot in llamaCommandSlots" :key="'command-'+slot.id" @click="runLlamaCommandSlot(slot)" :disabled="status.llamacpp || loading.llamacpp || llamaCommandRunning" :title="slot.command" class="flex w-full items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-zinc-950/40 px-2.5 py-2 text-left transition hover:border-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-50">
                                 <span class="min-w-0"><span class="block truncate text-xs font-medium text-zinc-300">{{ slot.name }}</span><span class="block truncate font-mono text-[10px] text-zinc-600">{{ slot.command }}</span></span>
@@ -818,32 +807,9 @@
                     </div>
                 </div>
 
-                <!-- 슬롯 관리(편집) -->
-                <div v-if="vllmEditing" class="mb-3 space-y-3 rounded-lg border border-rose-500/30 bg-zinc-950/50 p-3">
-                    <p class="text-[10px] leading-relaxed text-zinc-500">완성된 실행 명령어를 그대로 저장합니다. 실행 시 <span class="font-mono text-zinc-400">bash -lc</span>로 실행되며, vLLM venv와 <span class="font-mono text-zinc-400">~/.local/bin</span>이 PATH에 우선 추가됩니다.</p>
-                    <div v-if="!vllmDraft.length" class="py-1 text-center text-[10px] text-zinc-600">슬롯이 없습니다. 아래 버튼으로 추가하세요.</div>
-                    <div v-for="(slot, index) in vllmDraft" :key="slot.id || ('draft-' + index)" class="space-y-1.5 rounded-lg border border-zinc-800 bg-zinc-900/60 p-2.5">
-                        <div class="flex items-center gap-2">
-                            <span class="shrink-0 text-[9px] font-semibold uppercase tracking-wider text-zinc-600">{{ index + 1 }}</span>
-                            <input v-model.trim="slot.name" maxlength="80" placeholder="슬롯 이름 (예: Qwen3.8 PP2 INT4)" class="input-base min-w-0 flex-1 text-xs font-medium">
-                            <button @click="removeVllmSlot(index)" class="shrink-0 px-2 py-1.5 rounded border border-zinc-700 bg-zinc-800 text-zinc-500 transition hover:text-rose-400 hover:border-rose-900/50" title="슬롯 삭제">
-                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                            </button>
-                        </div>
-                        <textarea v-model="slot.command" rows="2" placeholder="완성된 실행 명령어 (여러 줄 가능)" class="input-base w-full font-mono text-[11px]" spellcheck="false"></textarea>
-                    </div>
-                    <div class="flex items-center justify-between gap-2 pt-1">
-                        <button @click="addVllmSlot()" class="rounded-lg border border-dashed border-zinc-700 px-3 py-1.5 text-[11px] text-zinc-400 transition hover:border-rose-500/40 hover:text-rose-300">+ 슬롯 추가</button>
-                        <div class="flex gap-2">
-                            <button @click="vllmEditing = false" class="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-[11px] text-zinc-400 transition hover:bg-zinc-700">취소</button>
-                            <button @click="saveVllmSlots" :disabled="vllmSlotsSaving" class="rounded-lg bg-rose-600 px-3 py-1.5 text-[11px] font-medium text-white transition hover:bg-rose-500 disabled:opacity-40">{{ vllmSlotsSaving ? '저장 중...' : '슬롯 저장' }}</button>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 슬롯 목록: 클릭 실행 + 인라인 제목 변경 -->
-                <div v-else class="mb-4 space-y-2">
-                    <div v-if="!vllmSlots.length" class="rounded-lg border border-dashed border-zinc-800 px-3 py-4 text-center text-[11px] text-zinc-600">슬롯이 없습니다. <span class="text-rose-300">슬롯 관리</span>에서 완성된 vLLM 실행 명령어를 추가하세요.</div>
+                <!-- 슬롯 목록: 클릭 실행 + 인라인 제목 변경 (편집은 대형 모달) -->
+                <div class="mb-4 space-y-2">
+                    <div v-if="!vllmSlots.length" class="rounded-lg border border-dashed border-zinc-800 px-3 py-4 text-center text-[11px] text-zinc-600">슬롯이 없습니다. <span class="text-rose-300">슬롯 편집</span>에서 완성된 vLLM 실행 명령어를 추가하세요.</div>
                     <div v-for="slot in vllmSlots" :key="slot.id" class="rounded-lg border bg-zinc-950/40 transition" :class="vllmRenameId === slot.id ? 'border-rose-500/40' : 'border-zinc-800'">
                         <!-- 인라인 제목 편집 -->
                         <div v-if="vllmRenameId === slot.id" class="flex items-center gap-1.5 p-2">
@@ -872,11 +838,119 @@
                     <div class="flex gap-2">
                         <button @click="copyVllmApiUrl" class="flex-1 py-2 rounded-lg text-xs font-medium border border-zinc-800 bg-zinc-800/50 text-rose-300 hover:bg-zinc-800 hover:border-zinc-700 transition" :title="`${serviceUrl(servicePorts.vllm)}/v1`">{{ vllmCopied ? '복사됨 ✓' : `API URL 복사 (:${servicePorts.vllm})` }}</button>
                         <button @click="openLogModal('vllm')" class="flex-1 py-2 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 transition">Log</button>
-                        <button @click="toggleVllmEditor" class="flex-1 py-2 rounded-lg text-xs font-medium border border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 transition">{{ vllmEditing ? '편집 닫기' : '슬롯 관리' }}</button>
+                        <button @click="openVllmEditor" class="flex-1 py-2 rounded-lg text-xs font-medium border border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 transition">슬롯 편집</button>
                     </div>
                 </div>
             </div>
         </section>
+
+        <!-- vLLM 슬롯 편집 (대형 모달) -->
+        <transition name="fade">
+        <div v-if="vllmEditing" class="fixed inset-0 z-50 flex items-stretch justify-center overflow-hidden sm:items-center sm:p-6" @click.self="closeVllmEditor()">
+        <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="closeVllmEditor()"></div>
+        <section class="relative flex h-[100dvh] max-h-[100dvh] w-full flex-col overflow-hidden border border-zinc-800 bg-zinc-900 shadow-2xl sm:h-[95vh] sm:max-h-[95vh] sm:max-w-6xl sm:rounded-xl">
+            <div class="flex shrink-0 items-center gap-3 border-b border-zinc-800 bg-zinc-950 px-5 py-4">
+                <img src="/service-icon/vllm" alt="" class="h-6 w-6 shrink-0 object-contain">
+                <div class="min-w-0">
+                    <h2 class="truncate text-lg font-semibold text-zinc-100">vLLM 슬롯 편집</h2>
+                    <p class="mt-0.5 truncate text-xs text-zinc-500">각 슬롯은 한 줄 요약으로 표시됩니다 — 명령어 박스를 클릭한 슬롯만 편집용으로 커집니다</p>
+                </div>
+                <span class="ml-auto shrink-0 rounded border border-zinc-700 px-2 py-1 font-mono text-[10px] text-zinc-500">{{ vllmDraft.length }} SLOTS</span>
+                <button @click="closeVllmEditor()" class="shrink-0 text-zinc-500 transition hover:text-zinc-200" title="닫기 (Esc)">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <div class="modal-scroll-lock min-h-0 flex-1 space-y-2 overflow-y-auto p-4 sm:p-5">
+                <div v-if="!vllmDraft.length" class="rounded-lg border border-dashed border-zinc-800 py-6 text-center text-[11px] text-zinc-600">슬롯이 없습니다. 아래 버튼으로 추가하세요.</div>
+                <!-- 접힘: 슬롯당 한 줄 — 전체가 한눈에 보임. 클릭한 슬롯만 편집기로 커진다 -->
+                <div v-for="(slot, index) in vllmDraft" :key="slot.id || ('draft-' + index)" class="space-y-2 rounded-lg border bg-zinc-950/50 p-2.5 transition" :class="vllmExpandedSlot === index ? 'border-rose-500/40' : 'border-zinc-800'">
+                    <div class="flex items-center gap-2">
+                        <span class="shrink-0 font-mono text-[10px] text-zinc-600">{{ index + 1 }}</span>
+                        <input v-model.trim="slot.name" maxlength="80" placeholder="슬롯 이름" class="input-base text-xs font-medium" :class="vllmExpandedSlot === index ? 'min-w-0 flex-1' : 'w-28 shrink-0 sm:w-48'">
+                        <button v-if="vllmExpandedSlot !== index" @click="expandVllmSlot(index)" class="min-w-0 flex-1 truncate rounded border bg-zinc-900/70 px-2.5 py-1.5 text-left font-mono text-[10px] transition hover:border-zinc-600 hover:text-zinc-300" :class="slot.command ? 'border-zinc-800 text-zinc-400' : 'border-dashed border-zinc-700 text-zinc-600'" :title="slot.command || '클릭하여 명령어 입력'">{{ slot.command ? slot.command.replace(/\s+/g, ' ').trim() : '완성된 실행 명령어 — 클릭하여 입력' }}</button>
+                        <button v-if="vllmExpandedSlot !== index" @click="removeVllmSlot(index)" class="shrink-0 rounded border border-zinc-700 bg-zinc-800 p-1.5 text-zinc-500 transition hover:border-rose-900/50 hover:text-rose-400" title="슬롯 삭제">
+                            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        </button>
+                    </div>
+                    <!-- 펼쳐짐: 클릭한 이 슬롯만 내용 전체 높이로 자동 확장 + 슬롯 단위 저장/취소/Esc -->
+                    <template v-if="vllmExpandedSlot === index">
+                        <textarea ref="vllmSlotInput" v-model="slot.command" :rows="vllmSlotRows(slot)" placeholder="완성된 실행 명령어 (여러 줄 가능)" class="input-base w-full font-mono text-[11px] leading-relaxed" spellcheck="false" @keydown.esc.stop.prevent="commitVllmSlotEdit()"></textarea>
+                        <div class="flex items-center justify-between gap-2">
+                            <span class="text-[10px] text-zinc-600">저장 / 취소 / Esc → 원래 한 줄로 복귀</span>
+                            <div class="flex shrink-0 gap-2">
+                                <button @click="removeVllmSlot(index)" class="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-[11px] text-zinc-500 transition hover:border-rose-900/50 hover:text-rose-400">삭제</button>
+                                <button @click="revertVllmSlotEdit(index)" class="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-[11px] text-zinc-400 transition hover:bg-zinc-700">취소</button>
+                                <button @click="commitVllmSlotEdit()" class="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-[11px] font-medium text-rose-300 transition hover:bg-rose-500/20">저장</button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+                <button @click="addVllmSlot()" class="w-full rounded-lg border border-dashed border-zinc-700 px-3 py-2 text-[11px] text-zinc-400 transition hover:border-rose-500/40 hover:text-rose-300">+ 슬롯 추가</button>
+            </div>
+            <div class="flex shrink-0 items-center justify-between gap-3 border-t border-zinc-800 bg-zinc-950 px-5 py-3.5">
+                <span class="hidden truncate text-[10px] text-zinc-600 sm:block">실행은 <span class="font-mono">bash -lc</span> · venv/PATH 우선 · 빈 명령어 슬롯은 저장 시 제외 · 서버 vllm_slots.json 저장</span>
+                <div class="flex w-full gap-2 sm:w-auto">
+                    <button @click="closeVllmEditor()" class="flex-1 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2 text-xs text-zinc-400 transition hover:bg-zinc-700 sm:flex-none sm:px-5">취소</button>
+                    <button @click="saveVllmSlots" :disabled="vllmSlotsSaving" class="flex-1 rounded-lg bg-rose-600 px-4 py-2 text-xs font-medium text-white transition hover:bg-rose-500 disabled:opacity-40 sm:flex-none sm:px-6">{{ vllmSlotsSaving ? '저장 중...' : '슬롯 전체 저장' }}</button>
+                </div>
+            </div>
+        </section>
+        </div>
+        </transition>
+
+        <!-- Llama.cpp 명령 슬롯 편집 (대형 모달, vLLM 슬롯 편집과 동일 UX) -->
+        <transition name="fade">
+        <div v-if="llamaCommandEditing" class="fixed inset-0 z-50 flex items-stretch justify-center overflow-hidden sm:items-center sm:p-6" @click.self="closeLlamaCommandEditor()">
+        <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="closeLlamaCommandEditor()"></div>
+        <section class="relative flex h-[100dvh] max-h-[100dvh] w-full flex-col overflow-hidden border border-zinc-800 bg-zinc-900 shadow-2xl sm:h-[95vh] sm:max-h-[95vh] sm:max-w-6xl sm:rounded-xl">
+            <div class="flex shrink-0 items-center gap-3 border-b border-zinc-800 bg-zinc-950 px-5 py-4">
+                <img src="/service-icon/llama" alt="" class="h-6 w-6 shrink-0 object-contain">
+                <div class="min-w-0">
+                    <h2 class="truncate text-lg font-semibold text-zinc-100">Llama.cpp 명령 슬롯 편집</h2>
+                    <p class="mt-0.5 truncate text-xs text-zinc-500">각 슬롯은 한 줄 요약으로 표시됩니다 — 명령어 박스를 클릭한 슬롯만 편집용으로 커집니다</p>
+                </div>
+                <span class="ml-auto shrink-0 rounded border border-zinc-700 px-2 py-1 font-mono text-[10px] text-zinc-500">{{ llamaCommandDraft.length }} SLOTS</span>
+                <button @click="closeLlamaCommandEditor()" class="shrink-0 text-zinc-500 transition hover:text-zinc-200" title="닫기 (Esc)">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <div class="modal-scroll-lock min-h-0 flex-1 space-y-2 overflow-y-auto p-4 sm:p-5">
+                <div v-if="!llamaCommandDraft.length" class="rounded-lg border border-dashed border-zinc-800 py-6 text-center text-[11px] text-zinc-600">명령 슬롯이 없습니다. 아래 버튼으로 추가하세요.</div>
+                <!-- 접힘: 슬롯당 한 줄 — 전체가 한눈에 보임. 클릭한 슬롯만 편집기로 커진다 -->
+                <div v-for="(slot, index) in llamaCommandDraft" :key="slot.id || ('llama-draft-' + index)" class="space-y-2 rounded-lg border bg-zinc-950/50 p-2.5 transition" :class="llamaCommandExpandedSlot === index ? 'border-indigo-500/40' : 'border-zinc-800'">
+                    <div class="flex items-center gap-2">
+                        <span class="shrink-0 font-mono text-[10px] text-zinc-600">{{ index + 1 }}</span>
+                        <input v-model.trim="slot.name" maxlength="80" placeholder="슬롯 이름" class="input-base text-xs font-medium" :class="llamaCommandExpandedSlot === index ? 'min-w-0 flex-1' : 'w-28 shrink-0 sm:w-48'">
+                        <button v-if="llamaCommandExpandedSlot !== index" @click="expandLlamaCommandSlot(index)" class="min-w-0 flex-1 truncate rounded border bg-zinc-900/70 px-2.5 py-1.5 text-left font-mono text-[10px] transition hover:border-zinc-600 hover:text-zinc-300" :class="slot.command ? 'border-zinc-800 text-zinc-400' : 'border-dashed border-zinc-700 text-zinc-600'" :title="slot.command || '클릭하여 명령어 입력'">{{ slot.command ? slot.command.replace(/\s+/g, ' ').trim() : '완성된 llama-server 실행 명령어 — 클릭하여 입력' }}</button>
+                        <button v-if="llamaCommandExpandedSlot !== index" @click="removeLlamaCommandSlot(index)" class="shrink-0 rounded border border-zinc-700 bg-zinc-800 p-1.5 text-zinc-500 transition hover:border-rose-900/50 hover:text-rose-400" title="슬롯 삭제">
+                            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        </button>
+                    </div>
+                    <!-- 펼쳐짐: 클릭한 이 슬롯만 내용 전체 높이로 자동 확장 + 슬롯 단위 저장/취소/Esc -->
+                    <template v-if="llamaCommandExpandedSlot === index">
+                        <textarea ref="llamaCommandSlotInput" v-model="slot.command" :rows="llamaCommandSlotRows(slot)" placeholder="완성된 llama-server 실행 명령어 (여러 줄 가능)" class="input-base w-full font-mono text-[11px] leading-relaxed" spellcheck="false" @keydown.esc.stop.prevent="commitLlamaCommandSlotEdit()"></textarea>
+                        <div class="flex items-center justify-between gap-2">
+                            <span class="text-[10px] text-zinc-600">저장 / 취소 / Esc → 원래 한 줄로 복귀</span>
+                            <div class="flex shrink-0 gap-2">
+                                <button @click="removeLlamaCommandSlot(index)" class="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-[11px] text-zinc-500 transition hover:border-rose-900/50 hover:text-rose-400">삭제</button>
+                                <button @click="revertLlamaCommandSlotEdit(index)" class="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-[11px] text-zinc-400 transition hover:bg-zinc-700">취소</button>
+                                <button @click="commitLlamaCommandSlotEdit()" class="rounded-lg border border-indigo-500/40 bg-indigo-500/10 px-3 py-1.5 text-[11px] font-medium text-indigo-300 transition hover:bg-indigo-500/20">저장</button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+                <button @click="addLlamaCommandSlot" class="w-full rounded-lg border border-dashed border-zinc-700 px-3 py-2 text-[11px] text-zinc-400 transition hover:border-indigo-500/40 hover:text-indigo-300">+ 슬롯 추가</button>
+            </div>
+            <div class="flex shrink-0 items-center justify-between gap-3 border-t border-zinc-800 bg-zinc-950 px-5 py-3.5">
+                <span class="hidden truncate text-[10px] text-zinc-600 sm:block">Linux에서는 <span class="font-mono">bash -lc</span> 실행 · 빈 명령어 슬롯은 저장 시 제외 · 서버에 저장</span>
+                <div class="flex w-full gap-2 sm:w-auto">
+                    <button @click="closeLlamaCommandEditor()" class="flex-1 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2 text-xs text-zinc-400 transition hover:bg-zinc-700 sm:flex-none sm:px-5">취소</button>
+                    <button @click="saveLlamaCommandSlots" :disabled="llamaCommandSlotsSaving" class="flex-1 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-medium text-white transition hover:bg-indigo-500 disabled:opacity-40 sm:flex-none sm:px-6">{{ llamaCommandSlotsSaving ? '저장 중...' : '슬롯 전체 저장' }}</button>
+                </div>
+            </div>
+        </section>
+        </div>
+        </transition>
 
         <!-- Llama.cpp Configurator -->
         <transition name="fade">
@@ -1701,11 +1775,15 @@
                     orderDrag: { key: '', pointerId: -1, x: 0, y: 0, active: false },
                     // vLLM 슬롯 카드 — 슬롯 목록은 서버의 vllm_slots.json에 저장.
                     vllmSlots: [], vllmEditing: false, vllmDraft: [], vllmSlotsSaving: false,
+                    // 대형 슬롯 편집 모달 — 펼쳐진 슬롯 인덱스(아니면 -1)와 취소 기준선 스냅샷.
+                    vllmExpandedSlot: -1, vllmDraftBase: [],
                     vllmRunning: false, vllmStopping: false, vllmCopied: false, vllmActionGeneration: 0,
                     vllmRenameId: '', vllmRenameValue: '', vllmRenaming: false,
                     // llama.cpp 카드: 기존 Configurator 프로필 + 별도 완성 명령 슬롯.
                     llamaConfigModal: { show: false },
                     llamaCommandSlots: [], llamaCommandEditing: false, llamaCommandDraft: [],
+                    // 대형 명령 슬롯 편집 모달 — vLLM 슬롯 편집과 동일한 UX.
+                    llamaCommandExpandedSlot: -1, llamaCommandDraftBase: [],
                     llamaCommandSlotsSaving: false, llamaCommandRunning: false,
                     unslothAvailable: false,
                     unslothPortDraft: 8890, unslothPortEditing: false, unslothPortSaving: false,
@@ -1782,6 +1860,25 @@
                 };
             },
             computed: {
+                // 각 GPU 프로필마다 현재 팬 상태를 칩 하나로 (gpu0/gpu1 모두 표시).
+                motherboardFanGpuChips() {
+                    const profiles = this.motherboardFans.settings?.gpu_profiles || {};
+                    const runtimeProfiles = this.motherboardFans.runtime?.profiles || {};
+                    const gpus = this.gpuTuning?.gpus || [];
+                    return Object.entries(profiles).map(([uuid, profile]) => {
+                        const gpu = gpus.find(item => item.uuid === uuid);
+                        return {
+                            uuid,
+                            label: gpu?.index != null ? 'GPU ' + gpu.index : (profile.fan_role === 'cmp170hx_hbm' ? 'CMP 170HX' : 'GPU'),
+                            enabled: !!profile.enabled,
+                            state: runtimeProfiles['gpu:' + uuid] || {},
+                        };
+                    }).sort((a, b) => {
+                        const ia = gpus.find(g => g.uuid === a.uuid)?.index ?? 99;
+                        const ib = gpus.find(g => g.uuid === b.uuid)?.index ?? 99;
+                        return ia - ib;
+                    });
+                },
                 // 토글 박스에 표시할 항목: 고정 카드 + coding agent + 나머지 카드 순서.
                 serviceVisibilityEntries() {
                     const defaults = [
@@ -1922,7 +2019,9 @@
                         ? this.motherboardFans.settings?.channel_label
                         : channelId === this.motherboardFans.settings?.cpu?.channel_id
                             ? this.motherboardFans.settings?.cpu?.channel_label
-                            : '';
+                            : Object.values(this.motherboardFans.settings?.gpu_profiles || {})
+                                .find(profile => profile.channel_id === channelId)?.channel_label
+                            || '';
                     const label = configuredLabel || fan.name || channelId;
                     return `${label} · ${fan.rpm != null ? Math.round(fan.rpm) + ' RPM' : 'RPM --'}`;
                 },
@@ -2296,7 +2395,7 @@
                         const res = await fetch('/api/motherboard-fans'); const data = await res.json();
                         if (!res.ok) throw new Error(data.detail || '메인보드 팬 조회 실패');
                         this.motherboardFans = data;
-                        if (data.runtime?.control_mode === 'manual' && data.runtime?.manual_channel_id) {
+                        if (data.runtime?.control_mode === 'manual' && data.runtime?.manual_channel_id && !this.motherboardFanManualChannel) {
                             this.motherboardFanManualChannel = data.runtime.manual_channel_id;
                             this.motherboardFanManualPercent = data.runtime.target_percent ?? this.motherboardFanManualPercent;
                         }
@@ -2307,11 +2406,15 @@
                         }
                     } catch(e) { this.motherboardFans.message = e.message; }
                 },
+                selectMotherboardFanGpu() {
+                    const profile = this.motherboardFans.settings?.gpu_profiles?.[this.motherboardFanEdit.gpu_uuid];
+                    if (profile) this.motherboardFanEdit = JSON.parse(JSON.stringify(profile));
+                },
                 async saveMotherboardFanConfig() {
                     if (this.motherboardFanEdit.enabled && !confirm('선택한 메인보드 팬을 GPU HBM 온도 커브로 자동 제어할까요?\n\n다른 팬 제어 프로그램은 동시에 실행하면 안 됩니다.')) return;
                     this.motherboardFanSaving = true;
                     try {
-                        const payload = {...this.motherboardFanEdit, cpu:this.motherboardCpuFanEdit};
+                        const {cpu, gpu_profiles, ...payload} = this.motherboardFanEdit;
                         const res = await fetch('/api/motherboard-fans/config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
                         const data = await res.json(); if(!res.ok) throw new Error(data.detail || '저장 실패');
                         this.motherboardFans = data;
@@ -2323,7 +2426,7 @@
                     if (this.motherboardCpuFanEdit.enabled && !confirm('선택한 채널을 CPU Package 온도에 따라 자동 제어할까요?\n\nCPU 팬 채널이 맞는지 먼저 수동 팬 찾기로 확인하는 것을 권장합니다.')) return;
                     this.motherboardFanSaving = true;
                     try {
-                        const payload = {...this.motherboardFanEdit, cpu:this.motherboardCpuFanEdit};
+                        const payload = {cpu:this.motherboardCpuFanEdit};
                         const res = await fetch('/api/motherboard-fans/config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
                         const data=await res.json(); if(!res.ok) throw new Error(data.detail || '저장 실패');
                         this.motherboardFans=data;
@@ -2346,12 +2449,17 @@
                 async applyManualMotherboardFan() {
                     this.motherboardFanSaving = true;
                     try {
-                        const percent = Math.max(20, Math.min(100, Number(this.motherboardFanManualPercent)));
+                        const percent = Math.max(0, Math.min(100, Number(this.motherboardFanManualPercent)));
                         this.motherboardFanManualPercent = percent;
                         const res = await fetch('/api/motherboard-fans/action', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action:'manual_set', channel_id:this.motherboardFanManualChannel, percent})});
                         const data=await res.json(); if(!res.ok) throw new Error(data.detail || '수동 PWM 적용 실패');
                         this.motherboardFans=data.status || this.motherboardFans;
                     } catch(e) { alert('수동 팬 제어 실패: '+e.message); } finally { this.motherboardFanSaving=false; }
+                },
+                selectManualMotherboardFan(fan) {
+                    this.motherboardFanManualChannel = fan.id;
+                    const saved = this.motherboardFans.runtime?.manual_targets?.[fan.id];
+                    this.motherboardFanManualPercent = saved != null ? saved : 60;
                 },
                 async resetMotherboardFans() {
                     this.motherboardFanSaving = true;
@@ -2825,15 +2933,54 @@
                         this.llamaCommandSlots = Array.isArray(d.slots) ? d.slots : [];
                     } catch (e) { }
                 },
-                toggleLlamaCommandEditor() {
-                    if (!this.llamaCommandEditing) this.llamaCommandDraft = this.llamaCommandSlots.map(slot => ({ ...slot }));
-                    this.llamaCommandEditing = !this.llamaCommandEditing;
+                openLlamaCommandEditor() {
+                    if (this.llamaCommandEditing) return;
+                    this.llamaCommandDraft = this.llamaCommandSlots.map(slot => ({ ...slot }));
+                    this.llamaCommandDraftBase = this.llamaCommandSlots.map(slot => ({ ...slot }));
+                    this.llamaCommandExpandedSlot = -1;
+                    this.llamaCommandEditing = true;
+                    document.body.classList.add('modal-open');
+                },
+                closeLlamaCommandEditor() {
+                    this.llamaCommandEditing = false;
+                    this.llamaCommandExpandedSlot = -1;
+                    if (!this.logModal.show && !this.comfyArgsModal.show && !this.llamaConfigModal.show && !this.vllmEditing) document.body.classList.remove('modal-open');
+                },
+                // 펼쳐진 텍스트에리어는 내용 전체가 보이도록 세로로 확장(상한 초과분은 내부 스크롤).
+                llamaCommandSlotRows(slot) {
+                    const lines = String(slot.command || '').split('\n').length;
+                    return Math.max(3, Math.min(14, lines + 1));
+                },
+                expandLlamaCommandSlot(index) {
+                    this.llamaCommandExpandedSlot = index;
+                    this.$nextTick(() => {
+                        let el = this.$refs.llamaCommandSlotInput;
+                        if (Array.isArray(el)) el = el[0];
+                        if (el) el.focus();
+                    });
+                },
+                // 변경 내용을 두고 원래 한 줄로만 돌아간다.
+                commitLlamaCommandSlotEdit() {
+                    this.llamaCommandExpandedSlot = -1;
+                },
+                // 해당 슬롯의 변경만 취소 기준선(모달 열 당시)으로 되돌리고 접는다.
+                revertLlamaCommandSlotEdit(index) {
+                    const base = this.llamaCommandDraftBase[index];
+                    const slot = this.llamaCommandDraft[index];
+                    if (slot) {
+                        slot.name = base ? base.name : '';
+                        slot.command = base ? base.command : '';
+                        if (!base) slot.id = '';
+                    }
+                    this.llamaCommandExpandedSlot = -1;
                 },
                 addLlamaCommandSlot() {
                     this.llamaCommandDraft.push({ id: '', name: '', command: '' });
+                    this.expandLlamaCommandSlot(this.llamaCommandDraft.length - 1);   // 새 슬롯은 바로 편집
                 },
                 removeLlamaCommandSlot(index) {
                     this.llamaCommandDraft.splice(index, 1);
+                    this.llamaCommandExpandedSlot = -1;
                 },
                 async saveLlamaCommandSlots() {
                     const slots = this.llamaCommandDraft
@@ -2847,7 +2994,9 @@
                         const d = await res.json().catch(() => ({}));
                         if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
                         this.llamaCommandSlots = Array.isArray(d.slots) ? d.slots : [];
-                        this.llamaCommandEditing = false;
+                        this.llamaCommandDraft = this.llamaCommandSlots.map(slot => ({ ...slot }));
+                        this.llamaCommandDraftBase = this.llamaCommandSlots.map(slot => ({ ...slot }));
+                        this.closeLlamaCommandEditor();
                     } catch (e) {
                         alert(`llama.cpp 명령 슬롯 저장 실패: ${e.message}`);
                     }
@@ -2877,16 +3026,55 @@
                         this.vllmSlots = Array.isArray(d.slots) ? d.slots : [];
                     } catch (e) { }
                 },
-                toggleVllmEditor() {
-                    if (!this.vllmEditing) this.vllmDraft = this.vllmSlots.map(slot => ({ ...slot }));
-                    this.vllmEditing = !this.vllmEditing;
+                openVllmEditor() {
+                    if (this.vllmEditing) return;
+                    this.vllmDraft = this.vllmSlots.map(slot => ({ ...slot }));
+                    this.vllmDraftBase = this.vllmSlots.map(slot => ({ ...slot }));
+                    this.vllmExpandedSlot = -1;
+                    this.vllmEditing = true;
+                    document.body.classList.add('modal-open');
+                },
+                closeVllmEditor() {
+                    this.vllmEditing = false;
+                    this.vllmExpandedSlot = -1;
+                    if (!this.logModal.show && !this.comfyArgsModal.show && !this.llamaConfigModal.show && !this.llamaCommandEditing) document.body.classList.remove('modal-open');
+                },
+                // 펼쳐진 텍스트에리어는 내용 전체가 보이도록 세로로 확장(상한 초과분은 내부 스크롤).
+                vllmSlotRows(slot) {
+                    const lines = String(slot.command || '').split('\n').length;
+                    return Math.max(3, Math.min(14, lines + 1));
+                },
+                expandVllmSlot(index) {
+                    this.vllmExpandedSlot = index;
+                    this.$nextTick(() => {
+                        let el = this.$refs.vllmSlotInput;
+                        if (Array.isArray(el)) el = el[0];
+                        if (el) el.focus();
+                    });
+                },
+                // 변경 내용을 두고 원래 박스 크기로만 돌아간다.
+                commitVllmSlotEdit() {
+                    this.vllmExpandedSlot = -1;
+                },
+                // 해당 슬롯의 변경만 취소 기준선(모달 열 당시)으로 되돌리고 접는다.
+                revertVllmSlotEdit(index) {
+                    const base = this.vllmDraftBase[index];
+                    const slot = this.vllmDraft[index];
+                    if (slot) {
+                        slot.name = base ? base.name : '';
+                        slot.command = base ? base.command : '';
+                        if (!base) slot.id = '';
+                    }
+                    this.vllmExpandedSlot = -1;
                 },
                 addVllmSlot() {
                     // 이름은 비워 두고 placeholder로 유도 — 저장 시 비어 있으면 서버가 '슬롯 N'으로 채웁니다.
                     this.vllmDraft.push({ id: '', name: '', command: '' });
+                    this.expandVllmSlot(this.vllmDraft.length - 1);   // 새 슬롯은 바로 편집
                 },
                 removeVllmSlot(index) {
                     this.vllmDraft.splice(index, 1);
+                    this.vllmExpandedSlot = -1;
                 },
                 startVllmRename(slot) {
                     this.vllmRenameId = slot.id;
@@ -2940,7 +3128,9 @@
                         const d = await res.json().catch(() => ({}));
                         if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
                         this.vllmSlots = Array.isArray(d.slots) ? d.slots : [];
-                        this.vllmEditing = false;
+                        this.vllmDraft = this.vllmSlots.map(slot => ({ ...slot }));
+                        this.vllmDraftBase = this.vllmSlots.map(slot => ({ ...slot }));
+                        this.closeVllmEditor();
                     } catch (e) {
                         alert(`슬롯 저장 실패: ${e.message}`);
                     }
@@ -3844,6 +4034,18 @@
                     if (this.logModal.show) { this.closeLogModal(); return; }
                     if (this.terminal.history.open) { this.closeHistoryViewer(); return; }
                     if (this.llamaConfigModal.show) { this.closeLlamaConfigurator(); return; }
+                    if (this.vllmEditing) {
+                        // 펼쳐진 명령어 박스가 있으면 원래 크기로 접기만, 없으면 모달 닫기.
+                        if (this.vllmExpandedSlot >= 0) this.vllmExpandedSlot = -1;
+                        else this.closeVllmEditor();
+                        return;
+                    }
+                    if (this.llamaCommandEditing) {
+                        // 펼쳐진 명령어 박스가 있으면 원래 크기로 접기만, 없으면 모달 닫기.
+                        if (this.llamaCommandExpandedSlot >= 0) this.llamaCommandExpandedSlot = -1;
+                        else this.closeLlamaCommandEditor();
+                        return;
+                    }
                     if (this.memo.show) this.closeMemo();
                     if (this.terminal.show) this.closeTerminalPanel();
                 },
