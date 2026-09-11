@@ -211,8 +211,11 @@ def gallery_dl_command():
         raise HTTPException(status_code=500, detail="gallery-dl이 설치되어 있지 않습니다.")
 
 def resolve_instagram_identity(url, cookie_file):
+    # gallery-dl의 --print는 postprocessor의 prepare 이벤트에서 출력을 생성하지만,
+    # --simulate(SimulationJob)는 prepare 이벤트를 발생시키지 않아 출력이 항상 비었다.
+    # --print 자체가 download 옵션을 비활성화하므로 --simulate는 불필요하다.
     command = gallery_dl_command() + [
-        "--quiet", "--simulate", "--range", "1", "--print", "{username}\t{owner_id}",
+        "--quiet", "--range", "1", "--print", "{username}\t{owner_id}",
     ]
     if cookie_file:
         command += ["--cookies", str(cookie_file)]
@@ -225,8 +228,17 @@ def resolve_instagram_identity(url, cookie_file):
         username, separator, owner_id = line.strip().partition("\t")
         if separator and username and owner_id.isdigit():
             return username, owner_id
-    detail = (result.stderr or result.stdout or "Instagram 계정 정보를 확인하지 못했습니다.")[-1500:]
-    raise HTTPException(status_code=400, detail=f"Instagram URL 확인 실패: {detail}")
+    stderr_text = (result.stderr or "").strip()
+    stdout_text = (result.stdout or "").strip()
+    detail = " / ".join(part[-1000:] for part in (stderr_text, stdout_text) if part)
+    if not detail:
+        detail = (
+            "Instagram이 게시물 정보를 반환하지 않았습니다. "
+            "Chrome 확장(Instagram Cookie Bridge)으로 쿠키를 동기화한 뒤 다시 시도하세요."
+            if not cookie_file else
+            "Instagram이 게시물 정보를 반환하지 않았습니다. 저장된 쿠키가 만료되었거나 로그인/2단계 인증 확인이 필요할 수 있습니다."
+        )
+    raise HTTPException(status_code=400, detail=f"Instagram URL 확인 실패: {detail[-1500:]}")
 
 def resolve_youtube_identity(url):
     try:
@@ -255,15 +267,31 @@ def list_downloaded_media(job_dir):
         key=lambda path: path.name.lower(),
     )
 
-def directory_download_size(path):
+def directory_download_state(path):
+    """Return (total bytes, name of the file being written right now).
+
+    gallery-dl (and its yt-dlp downloader) writes to a "<target>.part" /
+    "<target>.ytdl" temporary file, so the partial file reveals the real
+    download target even when the extractor overrides the "filename" keyword.
+    """
     total = 0
+    active_file = ""
+    active_mtime = -1.0
     for item in path.rglob("*"):
-        if item.is_file():
-            try:
-                total += item.stat().st_size
-            except OSError:
-                pass
-    return total
+        if not item.is_file():
+            continue
+        try:
+            stat = item.stat()
+        except OSError:
+            continue
+        total += stat.st_size
+        for suffix in (".part", ".ytdl"):
+            if item.name.endswith(suffix):
+                name = item.name[: -len(suffix)]
+                if stat.st_mtime >= active_mtime:
+                    active_file, active_mtime = name, stat.st_mtime
+                break
+    return total, active_file
 
 def run_gallery_media_download(url, job_dir, cookie_file, cutoff=None, progress_callback=None):
     command = gallery_dl_command() + [
@@ -271,7 +299,7 @@ def run_gallery_media_download(url, job_dir, cookie_file, cutoff=None, progress_
         "--filename", "{date:%Y-%m-%d}_{description[:80]}_{post_shortcode}_{num:>02}.{extension}",
         "--windows-filenames",
         "--no-mtime",
-        "--Print", "prepare:__MEDIA_PROGRESS__{_filename}",
+        "--Print", f"prepare:{GALLERY_PROGRESS_MARKER}{{post_shortcode}}",
     ]
     if cutoff:
         command += ["--date-after", cutoff.isoformat()]
@@ -294,7 +322,7 @@ def run_gallery_media_download(url, job_dir, cookie_file, cutoff=None, progress_
     reader.start()
     item_index = 0
     current_file = ""
-    initial_size = last_size = directory_download_size(job_dir)
+    initial_size = last_size = directory_download_state(job_dir)[0]
     last_check = time.monotonic()
     smoothed_speed = 0
     while process.poll() is None:
@@ -304,18 +332,19 @@ def run_gallery_media_download(url, job_dir, cookie_file, cutoff=None, progress_
             except queue.Empty:
                 break
             output_lines.append(line)
-            if line.startswith("__MEDIA_PROGRESS__"):
+            if line.startswith(GALLERY_PROGRESS_MARKER):
                 item_index += 1
-                current_file = Path(line.removeprefix("__MEDIA_PROGRESS__").strip()).name
+                printed = Path(line.removeprefix(GALLERY_PROGRESS_MARKER).strip()).name
+                current_file = "" if printed in ("", "None", ".") else printed
         now = time.monotonic()
-        current_size = directory_download_size(job_dir)
+        current_size, active_file = directory_download_state(job_dir)
         elapsed = max(now - last_check, 0.001)
         instant_speed = max(0, current_size - last_size) / elapsed
         smoothed_speed = instant_speed if not smoothed_speed else (smoothed_speed * 0.7 + instant_speed * 0.3)
         if progress_callback:
             progress_callback({
                 "stage": "downloading", "item_index": item_index, "item_total": None,
-                "current_file": current_file, "speed": smoothed_speed or None,
+                "current_file": active_file or current_file, "speed": smoothed_speed or None,
                 "downloaded_bytes": max(0, current_size - initial_size), "total_bytes": None, "eta": None,
             })
         last_size, last_check = current_size, now
@@ -414,6 +443,48 @@ def existing_ytdlp_downloads(info, job_dir):
         if any(marker in path.stem for marker in markers)
     ]
 
+GALLERY_PROGRESS_MARKER = "__MEDIA_PROGRESS__"
+GALLERY_SKIP_PREFIX = "# "
+
+def gallery_output_paths(result, job_dir):
+    """Split gallery-dl stdout into (downloaded paths, already-existing paths).
+
+    gallery-dl prints one line per handled file: "<path>" when it wrote the
+    file and "# <path>" when the target already existed and was skipped.
+    """
+    downloaded, skipped = [], []
+    if result is None or not result.stdout:
+        return downloaded, skipped
+    root = str(job_dir.resolve()) + os.sep
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line or line.startswith(GALLERY_PROGRESS_MARKER):
+            continue
+        is_skip = line.startswith(GALLERY_SKIP_PREFIX)
+        candidate = line[len(GALLERY_SKIP_PREFIX):].strip() if is_skip else line
+        if not candidate.startswith(root):
+            continue
+        path = Path(candidate)
+        if path.is_file():
+            (skipped if is_skip else downloaded).append(path)
+    return downloaded, skipped
+
+def gallery_error_detail(result, job_dir):
+    """gallery-dl output for users: drop progress markers and per-file path lines."""
+    if result is None:
+        return ""
+    root = str(job_dir.resolve())
+    lines = []
+    for line in f"{result.stderr or ''}\n{result.stdout or ''}".splitlines():
+        line = line.strip()
+        if not line or line.startswith(GALLERY_PROGRESS_MARKER):
+            continue
+        candidate = line[len(GALLERY_SKIP_PREFIX):].strip() if line.startswith(GALLERY_SKIP_PREFIX) else line
+        if candidate.startswith(root):
+            continue
+        lines.append(line)
+    return "\n".join(lines)
+
 def download_social_media(payload, job_dir, before_state=None, progress_callback=None):
     url = validate_media_download_url(payload.url)
     resolution = payload.resolution if payload.resolution in {"best", "2160", "1440", "1080", "720", "480"} else "1080"
@@ -450,13 +521,17 @@ def download_social_media(payload, job_dir, before_state=None, progress_callback
         ]
     if not files:
         existing_files = existing_ytdlp_downloads(ytdlp_info, job_dir)
+        if not existing_files:
+            # gallery-dl exits 0 after skipping every file that already exists,
+            # so its "# <path>" lines are the only evidence of a no-op success.
+            _, existing_files = gallery_output_paths(gallery_result, job_dir)
         if existing_files:
             names = ", ".join(path.name for path in existing_files[:3])
             raise HTTPException(
                 status_code=409,
                 detail=f"같은 화질과 형식의 파일이 이미 다운로드되어 있습니다: {names}",
             )
-        gallery_detail = (gallery_result.stderr or gallery_result.stdout) if gallery_result else None
+        gallery_detail = gallery_error_detail(gallery_result, job_dir)
         details = ytdlp_error or gallery_detail or "선택한 기간에 다운로드할 미디어가 없습니다."
         raise HTTPException(status_code=400, detail=f"미디어 다운로드 실패: {details[-2000:]}")
     return files

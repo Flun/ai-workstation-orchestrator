@@ -1023,13 +1023,26 @@ def infrastructure_vllm_start(values: dict[str, Any] | None = None):
         raise HTTPException(409, "선택 GPU(CMP 170HX 또는 native NVFP4)와 로컬 모델 준비 상태를 확인하세요")
     command, runtime_env = build_vllm_command(configured)
     devices = [item.strip() for item in str(configured["gpu_devices"]).split(",") if item.strip()]
-    pid = vllm_service.start(command, env=runtime_env, device=devices or None)
-    return {"ok": True, "pid": pid, "cmd": command, "profile": configured["profile"], "port": configured["port"]}
+    with vllm_service._lock:
+        previous_ready_port = getattr(vllm_service, "ready_port", None)
+        vllm_service.ready_port = configured["port"]
+        try:
+            pid = vllm_service.start(command, env=runtime_env, device=devices or None)
+        except Exception:
+            vllm_service.ready_port = previous_ready_port
+            raise
+    return {
+        "ok": True, "pid": pid, "generation": vllm_service.generation,
+        "phase": "starting", "cmd": command,
+        "profile": configured["profile"], "port": configured["port"],
+    }
 
 
 @router.post("/vllm/stop")
 def infrastructure_vllm_stop():
-    return {"ok": vllm_service.stop()}
+    if not vllm_service.stop():
+        raise HTTPException(409, "vLLM 프로세스 종료를 확인하지 못했습니다")
+    return {"ok": True, "phase": "stopped"}
 
 
 @router.post("/vllm/benchmark")

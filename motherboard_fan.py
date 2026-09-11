@@ -30,6 +30,7 @@ HELPER_HOST = "127.0.0.1"
 HELPER_PORT = 8997
 HELPER_TOKEN_FILE = HELPER_EXE.parent / "fan_helper_secret.txt"
 LINUX_HELPER = Path("/usr/local/sbin/main-server-fan-control")
+_settings_lock = threading.RLock()
 
 DEFAULT_CURVE = [
     {"temp": 40, "percent": 40},
@@ -103,6 +104,13 @@ def load_settings() -> dict[str, Any]:
                 values["cpu"] = cpu_values
     except (OSError, ValueError):
         pass
+    # Migrate the legacy single-GPU profile without changing the file on read.
+    if not isinstance(values.get("gpu_profiles"), dict):
+        values["gpu_profiles"] = {}
+        if values.get("gpu_uuid"):
+            values["gpu_profiles"][values["gpu_uuid"]] = {
+                key: values[key] for key in DEFAULTS if key != "cpu"
+            }
     return values
 
 
@@ -159,26 +167,43 @@ def _validate_profile(result: dict[str, Any], *, cpu: bool = False) -> dict[str,
 
 def validate_settings(values: dict[str, Any]) -> dict[str, Any]:
     result = load_settings()
-    result.update(values)
-    result = _validate_profile(result)
-    cpu_values = dict(load_settings()["cpu"])
+    profile_keys = set(DEFAULTS) - {"cpu"}
+    profiles = dict(result["gpu_profiles"])
+    if profile_keys.intersection(values):
+        uuid = str(values.get("gpu_uuid", result.get("gpu_uuid")) or "")
+        profile = {key: DEFAULTS[key] for key in profile_keys}
+        profile.update(profiles.get(uuid, {}))
+        profile.update({key: values[key] for key in profile_keys if key in values})
+        profile["gpu_uuid"] = uuid
+        profile = _validate_profile(profile)
+        if uuid:
+            profiles[uuid] = profile
+        result.update(profile)  # Legacy fields describe the last edited GPU.
+    # Never replace other GPUs with a potentially stale client-side snapshot.
+    result["gpu_profiles"] = profiles
+    cpu_values = dict(result["cpu"])
     supplied_cpu = values.get("cpu")
     if isinstance(supplied_cpu, dict):
         cpu_values.update(supplied_cpu)
     cpu_values["fan_role"] = "cpu_package"
     cpu_values["gpu_uuid"] = ""
     result["cpu"] = _validate_profile(cpu_values, cpu=True)
-    if result["enabled"] and result["cpu"]["enabled"] and result["channel_id"] == result["cpu"]["channel_id"]:
-        raise ValueError("GPU 팬과 CPU 팬은 서로 다른 메인보드 채널을 선택해야 합니다")
+    channels = set()
+    for profile in [*profiles.values(), result["cpu"]]:
+        if profile.get("enabled"):
+            if profile["channel_id"] in channels:
+                raise ValueError("GPU별 팬과 CPU 팬은 서로 다른 메인보드 채널을 선택해야 합니다")
+            channels.add(profile["channel_id"])
     return result
 
 
 def save_settings(values: dict[str, Any]) -> dict[str, Any]:
-    normalized = validate_settings(values)
-    temporary = SETTINGS_FILE.with_suffix(".json.tmp")
-    temporary.write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(temporary, SETTINGS_FILE)
-    return normalized
+    with _settings_lock:
+        normalized = validate_settings(values)
+        temporary = SETTINGS_FILE.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(temporary, SETTINGS_FILE)
+        return normalized
 
 
 class HelperClient:
@@ -325,6 +350,7 @@ class FanController:
         self._manual_mode = False
         self._manual_channel_id = ""
         self._manual_percent = 60
+        self._manual_targets: dict[str, int] = {}
         self._helper_status_cache: dict[str, Any] = {"time": 0.0, "value": {}}
         self._runtime: dict[str, Any] = {
             "active": False, "control_mode": "auto", "temperature": None,
@@ -356,17 +382,18 @@ class FanController:
                 try:
                     if _fan_control_running():
                         raise RuntimeError("Fan Control이 실행 중이어서 수동 팬 제어를 유지할 수 없습니다")
-                    if self._manual_channel_id:
+                    for channel_id, percent in self._manual_targets.items():
                         self.helper.request({
-                            "command": "set", "id": self._manual_channel_id,
-                            "percent": self._manual_percent,
+                            "command": "set", "id": channel_id,
+                            "percent": percent,
                         })
                     self._runtime = {
-                        "active": bool(self._manual_channel_id),
+                        "active": bool(self._manual_targets),
                         "control_mode": "manual",
                         "manual_channel_id": self._manual_channel_id,
+                        "manual_targets": dict(self._manual_targets),
                         "temperature": None,
-                        "target_percent": self._manual_percent if self._manual_channel_id else None,
+                        "target_percent": self._manual_targets.get(self._manual_channel_id),
                         "error": None,
                         "updated_at": time.time(),
                     }
@@ -378,7 +405,8 @@ class FanController:
                 return
             config = load_settings()
             cpu_config = config.get("cpu") or {}
-            if not config.get("enabled") and not cpu_config.get("enabled"):
+            gpu_profiles = config["gpu_profiles"]
+            if not any(p.get("enabled") for p in gpu_profiles.values()) and not cpu_config.get("enabled"):
                 if self._runtime.get("active"):
                     try:
                         self.helper.request({"command": "reset"})
@@ -402,22 +430,26 @@ class FanController:
                 return
 
             runtimes: dict[str, dict[str, Any]] = {}
-            if config.get("enabled"):
-                gpu = next((item for item in gpus if item.get("uuid") == config.get("gpu_uuid")), None)
+            for uuid, profile in gpu_profiles.items():
+                key = "gpu:" + uuid
+                if key not in self._profile_state:
+                    self._reset_profile_state(key)
+                if not profile.get("enabled"):
+                    runtimes[key] = self._disable_profile(key)
+                    continue
+                gpu = next((item for item in gpus if item.get("uuid") == uuid), None)
                 if not gpu:
-                    runtimes["gpu"] = self._profile_error("gpu", config, "연결된 GPU를 찾을 수 없습니다")
+                    runtimes[key] = self._profile_error(key, profile, "연결된 GPU를 찾을 수 없습니다")
                 else:
                     temperature = gpu.get("temp_memory")
                     sensor_error = None
                     if temperature is None:
                         temperature = 110
                         sensor_error = "HBM 온도를 읽지 못해 안전상 최대 PWM을 적용했습니다"
-                    runtimes["gpu"] = self._apply_profile(
-                        "gpu", config, float(temperature), sensor_error,
+                    runtimes[key] = self._apply_profile(
+                        key, profile, float(temperature), sensor_error,
                         {"gpu_uuid": gpu.get("uuid"), "gpu_name": gpu.get("name")},
                     )
-            else:
-                runtimes["gpu"] = self._disable_profile("gpu")
 
             if cpu_config.get("enabled"):
                 try:
@@ -436,7 +468,12 @@ class FanController:
             else:
                 runtimes["cpu"] = self._disable_profile("cpu")
 
-            primary = runtimes.get("gpu") if config.get("enabled") else runtimes.get("cpu", {})
+            # Keep the legacy summary useful even if the last edited GPU is off.
+            runtimes["gpu"] = next(
+                (value for key, value in runtimes.items() if key.startswith("gpu:") and value.get("active")),
+                runtimes.get("gpu:" + config.get("gpu_uuid", ""), {}),
+            )
+            primary = next((item for item in runtimes.values() if item.get("active")), {})
             self._runtime = {
                 **(primary or {}),
                 "active": any(item.get("active") for item in runtimes.values()),
@@ -572,9 +609,11 @@ class FanController:
             response = self.helper.request({"command": "reset"})
             self._reset_profile_state()
             self._manual_channel_id = ""
+            self._manual_targets.clear()
             self._runtime = {
                 "active": False,
                 "control_mode": "manual" if self._manual_mode else "auto",
+                "manual_targets": {},
                 "temperature": None, "target_percent": None, "error": None,
             }
             return response
@@ -587,10 +626,12 @@ class FanController:
             response = self.helper.request({"command": "reset"})
             self._manual_mode = True
             self._manual_channel_id = ""
+            self._manual_targets.clear()
             self._reset_profile_state()
             self._runtime = {
                 "active": False, "control_mode": "manual", "temperature": None,
-                "target_percent": None, "error": None, "updated_at": time.time(),
+                "target_percent": None, "manual_targets": {},
+                "error": None, "updated_at": time.time(),
             }
             response["message"] = "수동 팬 찾기 모드입니다. 저장된 자동 설정은 변경되지 않았습니다"
             return response
@@ -598,8 +639,8 @@ class FanController:
     def set_manual(self, channel_id: str, percent: int) -> dict[str, Any]:
         if not channel_id:
             raise ValueError("테스트할 팬 채널을 선택하세요")
-        if not 20 <= percent <= 100:
-            raise ValueError("수동 PWM은 20~100%여야 합니다")
+        if not 0 <= percent <= 100:
+            raise ValueError("수동 PWM은 0~100%여야 합니다")
         if _fan_control_running():
             raise RuntimeError("Fan Control을 종료한 뒤 수동 팬 찾기를 사용하세요")
         with self._lock:
@@ -609,13 +650,15 @@ class FanController:
             applied = int(round(float(response.get("percent", percent))))
             self._manual_channel_id = channel_id
             self._manual_percent = applied
+            self._manual_targets[channel_id] = applied
             self._runtime = {
                 "active": True, "control_mode": "manual",
                 "manual_channel_id": channel_id,
+                "manual_targets": dict(self._manual_targets),
                 "temperature": None, "target_percent": applied,
                 "error": None, "updated_at": time.time(),
             }
-            response["message"] = "선택한 팬을 수동 제어 중입니다. 자동 운전으로 돌아가면 기존 HBM 연동이 즉시 재개됩니다"
+            response["message"] = "채널별 테스트 PWM을 유지 중입니다. 자동 운전으로 돌아가면 모든 테스트 설정이 해제됩니다"
             return response
 
     def exit_manual(self) -> dict[str, Any]:
@@ -624,10 +667,12 @@ class FanController:
             response = self.helper.request({"command": "reset"})
             self._manual_mode = False
             self._manual_channel_id = ""
+            self._manual_targets.clear()
             self._reset_profile_state()
             self._runtime = {
                 "active": False, "control_mode": "auto", "temperature": None,
-                "target_percent": None, "error": None, "updated_at": time.time(),
+                "target_percent": None, "manual_targets": {},
+                "error": None, "updated_at": time.time(),
             }
             response["message"] = "자동 운전으로 복귀했습니다"
             return response
@@ -635,14 +680,19 @@ class FanController:
     def reconfigure(self) -> None:
         """Apply an edited curve immediately without carrying the old ramp state."""
         with self._lock:
+            config = load_settings()
+            channels = {p["channel_id"] for p in [*config["gpu_profiles"].values(), config["cpu"]] if p.get("enabled")}
+            for state in self._profile_state.values():
+                if state.get("channel_id") and state["channel_id"] not in channels:
+                    self.helper.request({"command": "reset", "id": state["channel_id"]})
             self._reset_profile_state()
 
     def test(self, channel_id: str, percent: int) -> dict[str, Any]:
         config = load_settings()
-        if config.get("enabled") or (config.get("cpu") or {}).get("enabled"):
+        if any(p.get("enabled") for p in config["gpu_profiles"].values()) or (config.get("cpu") or {}).get("enabled"):
             raise ValueError("자동 팬 제어를 먼저 끈 뒤 채널 테스트를 실행하세요")
-        if not 20 <= percent <= 100:
-            raise ValueError("테스트 PWM은 20~100%여야 합니다")
+        if not 0 <= percent <= 100:
+            raise ValueError("테스트 PWM은 0~100%여야 합니다")
         response = self.helper.request({"command": "set", "id": channel_id, "percent": percent})
         response["message"] = "15초 동안 적용되며 이후 메인보드 기본 모드로 자동 복귀합니다"
         return response

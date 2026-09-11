@@ -237,9 +237,9 @@ def command_set(channel_id: str, percent_text: str) -> dict[str, Any]:
     try:
         percent = int(percent_text)
     except ValueError as error:
-        raise FanControlError("팬 속도는 20~100 사이 정수여야 합니다") from error
-    if str(percent) != percent_text or not 20 <= percent <= 100:
-        raise FanControlError("팬 속도는 20~100 사이 정수여야 합니다")
+        raise FanControlError("팬 속도는 0~100 사이 정수여야 합니다") from error
+    if str(percent) != percent_text or not 0 <= percent <= 100:
+        raise FanControlError("팬 속도는 0~100 사이 정수여야 합니다")
     channel = _resolve_channel(channel_id)
     normalized = channel["id"]
     raw_pwm = round(percent * 255 / 100)

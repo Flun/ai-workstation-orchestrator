@@ -50,6 +50,7 @@ from os_boot import router as os_boot_router
 from motherboard_fan import (
     controller as motherboard_fan_controller,
     save_settings as save_motherboard_fan_settings,
+    validate_settings as validate_motherboard_fan_settings,
 )
 import pawnio_bootstrap
 from comfy_model_paths import ModelPathError, ensure_model_config
@@ -57,6 +58,7 @@ import cmp170_service
 import cmp170tune
 import vram_arbiter
 from vram_arbiter import router as gpu_arbiter_router, proxy_router as gpu_arbiter_proxy_router
+import llm_bench
 
 HOST = "0.0.0.0"
 PORT = 8999
@@ -158,6 +160,7 @@ app.include_router(infrastructure_router)
 app.include_router(os_boot_router)
 app.include_router(gpu_arbiter_router)
 app.include_router(gpu_arbiter_proxy_router)
+app.include_router(llm_bench.router)
 
 
 # ---------- 유틸 ----------
@@ -1646,6 +1649,14 @@ def infrastructure_page():
     )
 
 
+@app.get("/llm-bench", response_class=HTMLResponse)
+def llm_bench_page():
+    return FileResponse(
+        os.path.join(BASE_DIR, "llm_bench.html"),
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
 # ---------- 벤더 스크립트 ----------
 # xterm.js 계열은 CDN(jsdelivr)이 들쭉날쭉 끊겨 터미널 탭이 조용히 안 뜨는
 # 일이 있어서, pin된 버전을 repo의 vendor/ 에 들여와 앱이 직접 서빙한다.
@@ -1742,34 +1753,38 @@ def service_icon(name: str):
 
 # ---------- 상태 ----------
 
-def _pid_in_dir(pid, dir_path):
-    """프로세스가 지정 폴더의 것이냐 — 절대 경로/상대 경로(portable)/cwd 모두 매칭.
+def _is_comfy_process(pid, comfy_dir):
+    """프로세스가 정말 이 설치의 ComfyUI `main.py`인지 argv 구조로 검증합니다.
 
-    ComfyUI_windows_portable은 `ComfyUI\\main.py` 같은 상대 경로로 실행되어
-    전체 경로 문자열 매칭만으로는 감지가 안 됩니다.
+    경로/마커 *문자열* 매칭만으로는 `bash -c '... main.py ...'` 래퍼나, 본문에
+    ComfyUI 경로 문자열을 지니는 무관한 프로세스(에이전트 스크립트, 편집기,
+    grep 등)까지 잘못 잡습니다. 이 목록이 Kill의 대상이 되었으므로:
+      - argv[1]이 main.py 스크립트이어야 하고 (basename, 상대경로 포함)
+      - 스크립트가 설치 폴더 안이거나 cwd가 설치 폴더여야 합니다.
     """
-    if not dir_path:
-        return True
+    if not comfy_dir:
+        return False
     try:
         proc = psutil.Process(pid)
-        cmdline = " ".join(proc.cmdline() or [])
-        if dir_path in cmdline:
-            return True
-        try:
-            cwd = (proc.cwd() or "").replace("/", os.sep)
-            if cwd.lower() == os.path.normpath(dir_path).lower():
-                return True
-        except (psutil.AccessDenied, OSError):
-            pass
-        leaf = os.path.basename(os.path.normpath(dir_path))
-        joined = cmdline.replace("/", os.sep)
-        return f"{leaf}{os.sep}main.py" in joined
+        argv = proc.cmdline() or []
     except Exception:
+        return False
+    if len(argv) < 2:
+        return False
+    script = str(argv[1]).replace("\\", "/")
+    if os.path.basename(script) != "main.py":
+        return False
+    if str(comfy_dir) in script:
+        return True
+    try:
+        cwd = (proc.cwd() or "").replace("/", os.sep)
+        return cwd.lower() == os.path.normpath(str(comfy_dir)).lower()
+    except (psutil.Error, OSError):
         return False
 
 
 def _comfy_instance_of_cmdline(command, ports_by_instance):
-    """cmdline이 어느 ComfyUI 인스턴스의 것인지 판별합니다 (없으면 None).
+    """cmdline이 어느 ComfyUI 인스턴스의 것인지 판별합니다.
 
     --user-directory의 user-<key>를 우선 보고, 그다음이 포트 매칭입니다. 메인
     인스턴스는 기본(user/, 기본 포트)을 쓰기 때문에 명시적 표식이 없으면 main으로
@@ -1777,15 +1792,15 @@ def _comfy_instance_of_cmdline(command, ports_by_instance):
     """
     lowered = str(command or "").lower()
     match = re.search(r"--user-directory[= ]+[^\s]*user-([a-z0-9_]+)", lowered)
-    if match and match.group(1) in COMFY_INSTANCES and match.group(1) != "main":
+    if match and match.group(1) in COMFY_INSTANCES:
         return match.group(1)
     port_match = re.search(r"--port[= ]+(\d+)", lowered)
     if port_match:
         port = int(port_match.group(1))
         for instance, configured_port in ports_by_instance.items():
-            if port == configured_port and instance != "main":
+            if port == configured_port:
                 return instance
-    return None
+    return "main"
 
 
 def _comfy_external_pids(instance="main"):
@@ -1798,7 +1813,7 @@ def _comfy_external_pids(instance="main"):
     comfy_dir = settings.get("comfyui_dir")
     if not comfy_dir:
         return []
-    pids = [pid for pid in find_process(r"main\.py") if _pid_in_dir(pid, comfy_dir)]
+    pids = [pid for pid in find_process(r"main\.py") if _is_comfy_process(pid, comfy_dir)]
     if not pids:
         return []
 
@@ -1815,6 +1830,10 @@ def _comfy_external_pids(instance="main"):
             command = " ".join(psutil.Process(pid).cmdline() or [])
         except Exception:
             command = ""
+        if not command:
+            # cmdline를 읽지 못하는 프로세스(접근 거부 등)는 어느 인스턴스로도
+            # 귀속하지 않습니다.
+            continue
         if _comfy_instance_of_cmdline(command, ports_by_instance) == instance:
             result.append(pid)
     return result
@@ -1995,6 +2014,52 @@ def _service_state(name):
     return st
 
 
+# ---------- LLM Benchmark: main_server가 직접 실행한 LLM 서비스 자동 탐지 ----------
+
+def _bench_llm_services():
+    """llm_bench 페이지용. main_server에서 켜둔 vLLM/llama.cpp API 목록을 반환."""
+    found = []
+    try:
+        st = _service_state("vllm")
+        if st.get("ready") and st.get("port"):
+            port = int(st["port"])
+            slot_label = ""
+            try:
+                running_cname = getattr(services["vllm"], "container_name", "") or ""
+                for slot in _vllm_slots_load():
+                    cmd = slot.get("command") or ""
+                    if running_cname and _vllm_container_name(cmd) == running_cname:
+                        slot_label = slot.get("name") or ""
+                        break
+                    if not slot_label and port == _vllm_command_port(cmd):
+                        slot_label = slot.get("name") or ""
+            except Exception:
+                pass
+            found.append({
+                "key": "vllm",
+                "label": ("vLLM · 슬롯 " + slot_label) if slot_label else "vLLM (main_server)",
+                "base_url": f"http://127.0.0.1:{port}/v1",
+                "engine": "vLLM",
+            })
+    except Exception:
+        pass
+    try:
+        st = _service_state("llama")
+        if st.get("ready") and st.get("port"):
+            found.append({
+                "key": "llama",
+                "label": "llama.cpp (main_server)",
+                "base_url": f"http://127.0.0.1:{int(st['port'])}/v1",
+                "engine": "llama.cpp",
+            })
+    except Exception:
+        pass
+    return found
+
+
+llm_bench.set_service_discovery(_bench_llm_services)
+
+
 def _comfy_instances_payload():
     """프론트가 인스턴스별 카드/버튼을 렌더링하는 데 쓰는 요약 정보."""
     payload = {}
@@ -2127,24 +2192,25 @@ def motherboard_fans_get():
 @app.post("/api/motherboard-fans/config")
 def motherboard_fans_config(data: dict):
     try:
+        normalized = validate_motherboard_fan_settings(data)
+    except (KeyError, TypeError, ValueError) as error:
+        raise HTTPException(400, f"메인보드 팬 설정이 올바르지 않습니다: {error}") from error
+
+    if any(key not in {"cpu", "gpu_profiles"} for key in data) and normalized.get("enabled") and normalized.get("fan_role") == "cmp170hx_hbm":
+        try:
+            snapshot = _gpu_tuning_snapshot()
+        except Exception as error:
+            raise HTTPException(400, f"CMP 170HX 식별에 실패해 팬 제어를 활성화하지 않았습니다: {error}") from error
+        selected = next((gpu for gpu in snapshot.get("gpus", []) if gpu.get("uuid") == normalized.get("gpu_uuid")), None)
+        if not selected or selected.get("profile") != "cmp_170hx":
+            raise HTTPException(400, "CMP 170HX 팬 역할에는 CMP 170HX로 식별된 GPU를 선택해야 합니다")
+
+    try:
         normalized = save_motherboard_fan_settings(data)
     except (KeyError, TypeError, ValueError) as error:
         raise HTTPException(400, f"메인보드 팬 설정이 올바르지 않습니다: {error}") from error
 
-    if normalized.get("enabled") and normalized.get("fan_role") == "cmp170hx_hbm":
-        try:
-            snapshot = _gpu_tuning_snapshot()
-        except Exception as error:
-            normalized["enabled"] = False
-            save_motherboard_fan_settings(normalized)
-            raise HTTPException(400, f"CMP 170HX 식별에 실패해 팬 제어를 활성화하지 않았습니다: {error}") from error
-        selected = next((gpu for gpu in snapshot.get("gpus", []) if gpu.get("uuid") == normalized.get("gpu_uuid")), None)
-        if not selected or selected.get("profile") != "cmp_170hx":
-            normalized["enabled"] = False
-            save_motherboard_fan_settings(normalized)
-            raise HTTPException(400, "CMP 170HX 팬 역할에는 CMP 170HX로 식별된 GPU를 선택해야 합니다")
-
-    if not normalized.get("enabled") and not (normalized.get("cpu") or {}).get("enabled"):
+    if not any(p.get("enabled") for p in normalized["gpu_profiles"].values()) and not (normalized.get("cpu") or {}).get("enabled"):
         try:
             motherboard_fan_controller.reset()
         except Exception:
@@ -3198,6 +3264,37 @@ def comfy_start(data: dict | None = None):
     return _comfy_start_internal(data.get("instance", "main"), data)
 
 
+def _comfy_stop_instance(service_name, force=False):
+    """인스턴스의 ComfyUI 프로세스를 전부 종료합니다.
+
+    manager가 pidfile로 추적하는 프로세스뿐 아니라, 터미널 등에서 직접 띄워
+    pidfile이 없는 인스턴스까지 포트/user-directory로 찾아 프로세스 트리를
+    종료합니다. 예전에는 pidfile이 없으면 stop/kill이 "프로세스 없음"으로
+    실패했지만 상태 스캔은 계속 running이라 보여, 카드가 영구 교착되었습니다.
+
+    반환값은 (성공 여부, 종료 시도 대상 PID 목록).
+    """
+    svc = services[service_name]
+    instance = "main" if service_name == "comfyui" else "gpu1"
+    pids = _comfy_external_pids(instance)
+    if pids:
+        ok = svc.force_kill(pids=pids) if force else svc.stop(pids=pids)
+    else:
+        ok = svc.force_kill() if force else svc.stop()
+    return ok, pids
+
+
+def _comfy_stop_failure_detail(instance, pids):
+    label = COMFY_INSTANCE_LABELS[instance]
+    if not pids:
+        return f"{label} 프로세스를 찾지 못했습니다. 이미 종료되었거나 추적할 수 없는 프로세스일 수 있습니다."
+    return (
+        f"{label} 종료 신호를 보냈지만 프로세스가 즉시 종료되지 않았습니다. "
+        "디스크 I/O(NAS/FUSE 마운트)나 GPU 드라이버에 걸린 D 상태 프로세스는 SIGKILL로도 즉시 죽지 않을 수 있습니다. "
+        "잠시 후 Stop/Kill 버튼을 다시 누르세요."
+    )
+
+
 @app.post("/api/comfy/stop")
 async def comfy_stop(request: Request):
     _require_comfy_confirmation(request)
@@ -3205,7 +3302,11 @@ async def comfy_stop(request: Request):
     body = await request.json() if content_type.startswith("application/json") else {}
     instance = (body or {}).get("instance") or request.query_params.get("instance")
     instance = _comfy_instance(instance)
-    return {"ok": services[_comfy_service_name(instance)].stop(), "instance": instance}
+    service_name = _comfy_service_name(instance)
+    ok, pids = _comfy_stop_instance(service_name)
+    if ok:
+        return {"ok": True, "instance": instance}
+    return {"ok": False, "instance": instance, "detail": _comfy_stop_failure_detail(instance, pids)}
 
 
 @app.get("/api/comfy/settings")
@@ -3855,13 +3956,18 @@ def _vllm_listener_pids():
 
 def _vllm_container_ids():
     found = set()
-    cidfile = getattr(services["vllm"], "container_id_file", None)
-    if cidfile:
+    cidfiles = set(glob.glob(os.path.join(os.path.dirname(services["vllm"].log_file), "vllm-*.cid")))
+    tracked_cidfile = getattr(services["vllm"], "container_id_file", None)
+    if tracked_cidfile:
+        cidfiles.add(tracked_cidfile)
+    for cidfile in cidfiles:
         try:
             with open(cidfile, encoding="utf-8") as handle:
                 container_id = handle.read().strip()
-                if container_id:
+                if container_id and _docker_container_active(container_id):
                     found.add(container_id)
+                else:
+                    os.remove(cidfile)
         except OSError:
             pass
 
@@ -3902,7 +4008,7 @@ def _configured_vllm_container_names():
 
 
 def _docker_vllm_container_ids():
-    """Find a running slot container even before its vLLM process is ready."""
+    """Find an active slot container even before its vLLM process is ready."""
     docker = shutil.which("docker")
     if not docker:
         return set()
@@ -3914,7 +4020,7 @@ def _docker_vllm_container_ids():
     for prefix in prefixes:
         try:
             completed = subprocess.run(
-                [*prefix, "ps", "--no-trunc", "--format", "{{.ID}}\t{{.Names}}\t{{.Labels}}"],
+                [*prefix, "ps", "-a", "--no-trunc", "--format", "{{.ID}}\t{{.Names}}\t{{.Labels}}\t{{.State}}"],
                 capture_output=True, text=True, timeout=5, creationflags=NO_WINDOW,
             )
         except (OSError, subprocess.SubprocessError):
@@ -3923,15 +4029,39 @@ def _docker_vllm_container_ids():
             continue
         found = set()
         for line in completed.stdout.splitlines():
-            parts = line.split("\t", 2)
+            parts = line.split("\t", 3)
             if len(parts) < 2:
                 continue
             container_id, name = parts[:2]
             labels = parts[2] if len(parts) > 2 else ""
-            if name in configured_names or "main-server.vllm-run=" in labels:
+            state = parts[3].lower() if len(parts) > 3 else "running"
+            if state not in {"exited", "dead"} and (name in configured_names or "main-server.vllm-run=" in labels):
                 found.add(container_id)
         return found
     return set()
+
+
+def _docker_container_active(container_id):
+    docker = shutil.which("docker")
+    if not docker or not container_id:
+        return False
+    prefixes = [[docker]]
+    sudo = shutil.which("sudo")
+    if sudo:
+        prefixes.insert(0, [sudo, "-n", docker])
+    for prefix in prefixes:
+        try:
+            inspected = subprocess.run(
+                [*prefix, "inspect", "--format", "{{.State.Status}}", container_id],
+                capture_output=True, text=True, timeout=5, creationflags=NO_WINDOW,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if inspected.returncode == 0:
+            return inspected.stdout.strip().lower() not in {"exited", "dead"}
+        if "permission denied" not in (inspected.stderr or "").lower():
+            return False
+    return False
 
 
 def _vllm_container_id():
@@ -3958,6 +4088,14 @@ def _stop_vllm_container(container_id, force=False):
         try:
             completed = subprocess.run(command, capture_output=True, text=True, timeout=10, creationflags=NO_WINDOW)
             if completed.returncode != 0:
+                inspected = subprocess.run(
+                    [*prefix, "inspect", "--format", "{{.State.Status}}", container_id],
+                    capture_output=True, text=True, timeout=5, creationflags=NO_WINDOW,
+                )
+                if inspected.returncode != 0 and "permission denied" not in (inspected.stderr or "").lower():
+                    return True  # already absent is a successful, idempotent stop
+                if inspected.returncode == 0 and inspected.stdout.strip().lower() in {"exited", "dead"}:
+                    return True
                 continue
             inspected = subprocess.run(
                 [*prefix, "inspect", "--format", "{{.State.Running}}", container_id],
@@ -4101,7 +4239,9 @@ def _vllm_stop(force=False):
             svc.container_uses_sudo = False
             svc.systemd_unit = None
             svc.container_name = None
-        return bool(found) and stopped
+        # Stop is idempotent: no PID/container/listener is the desired result,
+        # including recovery from stale state left by an earlier failed start.
+        return stopped
 
 
 @app.post("/api/vllm/stop")
@@ -4974,6 +5114,8 @@ def panic(request: Request):
             results[name] = _vllm_stop(force=True)
         elif name == "unsloth":
             results[name] = _unsloth_stop(force=True)
+        elif name in ("comfyui", "comfyui_gpu1"):
+            results[name], _ = _comfy_stop_instance(name)
         else:
             results[name] = svc.stop()
             if name == "omp_web":
@@ -4997,6 +5139,12 @@ def force_kill(server: str, request: Request):
     elif server == "unsloth":
         # setsid/nohup처럼 manager 밖에서 뜬 인스턴스도 Kill 버튼으로 정리되도록 폴백.
         killed = _unsloth_stop(force=True)
+    elif server in ("comfyui", "comfyui_gpu1"):
+        # nohup/터미널처럼 manager 밖에서 뜬 인스턴스도 Kill 버튼으로 정리되도록 폴백.
+        killed, pids = _comfy_stop_instance(server, force=True)
+        if not killed:
+            return {"ok": False, "detail": _comfy_stop_failure_detail(
+                "main" if server == "comfyui" else "gpu1", pids)}
     else:
         killed = services[server].force_kill()
         if server == "omp_web":

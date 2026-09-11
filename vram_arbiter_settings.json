@@ -40,7 +40,7 @@
   "learned_peak_mb": {
     "llama-8080": 55287,
     "llama-8081": 58436,
-    "comfy-main": 63178,
+    "comfy-main": 1302,
     "llama-44099": 29794,
     "llama-43147": 22358,
     "llama-57035": 32046,
@@ -55,7 +55,17 @@
     "llama-39467": 22782,
     "llama-39989": 22782,
     "llama-44453": 22782,
-    "llama-18080": 78182
+    "llama-18080": 78182,
+    "llama-18099": 552,
+    "comfy-gpu1": 9159,
+    "llama-56075": 33954,
+    "llama-52755": 33954,
+    "llama-42341": 33966,
+    "llama-46993": 33344,
+    "llama-34029": 33704,
+    "llama-55063": 34850,
+    "llama-57959": 35016,
+    "llama-60543": 35664
   },
   "unknown_clear_residents": true,
   "post_admit_grace_sec": 30,
