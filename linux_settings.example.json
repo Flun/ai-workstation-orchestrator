@@ -1,7 +1,7 @@
 {
   "comfyui_dir": "/opt/ComfyUI",
   "comfyui_python": "/opt/ComfyUI/venv/bin/python",
-  "comfyui_model_root": "/mnt/main-server-comfy/ComfyUI_windows_portable/ComfyUI/models",
+  "comfyui_model_root": "/opt/ComfyUI/models",
   "comfyui_port": "8188",
   "llama_install_root": "/opt",
   "llama_version_glob": "/opt/llama-*",

@@ -6,9 +6,7 @@ TARGET_USER=flux
 TARGET_UID=1000
 TARGET_GID=1000
 MODEL_VOLUME_UUID=4CF89226F8920E78
-COMFY_MODEL_VOLUME_UUID=06ECC18DECC17787
 MODEL_MOUNT=/mnt/main-server-models
-COMFY_MODEL_MOUNT=/mnt/main-server-comfy
 CONSOLE_BLANK_SECONDS=300
 
 die() { echo "$*" >&2; exit 2; }
@@ -107,19 +105,13 @@ apply_model_mounts() {
   # user while directories remain traversable/writable; Windows filename rules
   # prevent names that cannot be used after rebooting into Windows.
   mountpoint -q "$MODEL_MOUNT" || install -d -o root -g root -m 0755 "$MODEL_MOUNT"
-  mountpoint -q "$COMFY_MODEL_MOUNT" || install -d -o root -g root -m 0755 "$COMFY_MODEL_MOUNT"
   ensure_fstab_entry "$MODEL_VOLUME_UUID" "$MODEL_MOUNT" \
-    "rw,uid=$TARGET_UID,gid=$TARGET_GID,fmask=0111,dmask=0000,windows_names,nofail,x-systemd.device-timeout=10s"
-  ensure_fstab_entry "$COMFY_MODEL_VOLUME_UUID" "$COMFY_MODEL_MOUNT" \
     "rw,uid=$TARGET_UID,gid=$TARGET_GID,fmask=0111,dmask=0000,windows_names,nofail,x-systemd.device-timeout=10s"
   systemctl daemon-reload
   # ntfs-3g cannot change ro/rw or masks with remount. A busy mount fails
   # safely here; stop workloads using it and rerun this selected setup action.
-  local target
-  for target in "$MODEL_MOUNT" "$COMFY_MODEL_MOUNT"; do
-    mountpoint -q "$target" && umount "$target"
-    mount "$target"
-  done
+  mountpoint -q "$MODEL_MOUNT" && umount "$MODEL_MOUNT"
+  mount "$MODEL_MOUNT"
   echo "모델 볼륨 고정 마운트 완료"
 }
 

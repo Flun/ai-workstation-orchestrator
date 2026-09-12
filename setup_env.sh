@@ -52,7 +52,6 @@ fi
 sudo install -d -o "$INSTALL_USER" -g "$(id -gn)" -m 0755 /opt/llama
 
 MODEL_VOLUME_UUID="${MAIN_SERVER_MODEL_UUID:-4CF89226F8920E78}"
-COMFY_MODEL_VOLUME_UUID="${MAIN_SERVER_COMFY_MODEL_UUID:-06ECC18DECC17787}"
 INSTALL_UID=$(id -u)
 INSTALL_GID=$(id -g)
 
@@ -61,7 +60,6 @@ sed -e "s/^TARGET_USER=.*/TARGET_USER=$INSTALL_USER/" \
     -e "s/^TARGET_UID=.*/TARGET_UID=$INSTALL_UID/" \
     -e "s/^TARGET_GID=.*/TARGET_GID=$INSTALL_GID/" \
     -e "s/^MODEL_VOLUME_UUID=.*/MODEL_VOLUME_UUID=$MODEL_VOLUME_UUID/" \
-    -e "s/^COMFY_MODEL_VOLUME_UUID=.*/COMFY_MODEL_VOLUME_UUID=$COMFY_MODEL_VOLUME_UUID/" \
     system/main-server-linux-setup | sudo tee /usr/local/sbin/main-server-linux-setup >/dev/null
 sudo chown root:root /usr/local/sbin/main-server-linux-setup
 sudo chmod 0755 /usr/local/sbin/main-server-linux-setup

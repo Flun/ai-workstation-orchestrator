@@ -3224,7 +3224,7 @@ def _comfy_start_internal(instance="main", data=None):
         raise HTTPException(400, f"ComfyUI 폴더가 없습니다: {comfy_dir}")
     try:
         model_config, resolved_model_root = ensure_model_config(
-            comfy_dir, settings.get("comfyui_model_root"), try_mount=True,
+            comfy_dir, settings.get("comfyui_model_root"),
         )
     except ModelPathError as error:
         raise HTTPException(400, str(error)) from error

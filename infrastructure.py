@@ -220,7 +220,7 @@ def save_settings(values: dict[str, Any]) -> dict[str, Any]:
     if (comfy_dir / "main.py").is_file():
         try:
             _, resolved_comfy_models = ensure_model_config(
-                str(comfy_dir), merged["comfyui_model_root"], try_mount=True,
+                str(comfy_dir), merged["comfyui_model_root"],
             )
         except ModelPathError as error:
             raise HTTPException(400, str(error)) from error
@@ -757,7 +757,7 @@ def _install_worker(target: str) -> None:
             _run_logged([str(python), "-m", "pip", "install", "--upgrade", "pip"])
             _run_logged([str(python), "-m", "pip", "install", "-r", str(directory / "requirements.txt")])
             _install_comfy_custom_nodes(directory, python)
-            ensure_model_config(str(directory), configured["comfyui_model_root"], try_mount=True)
+            ensure_model_config(str(directory), configured["comfyui_model_root"])
             _install_sageattention(python)
         elif target.startswith("cmpunlocker-"):
             if os.name == "nt":

@@ -18,7 +18,6 @@ ROOT_HELPER = "/usr/local/sbin/main-server-linux-setup"
 SERVICE_TEMPLATE = Path(BASE_DIR) / "system" / "main_server.service"
 SERVICE_FILE = Path.home() / ".config" / "systemd" / "user" / "main_server.service"
 MODEL_MOUNT = Path("/mnt/main-server-models")
-COMFY_MODEL_MOUNT = Path("/mnt/main-server-comfy")
 GRUB_CONSOLE_CONFIG = Path("/etc/default/grub.d/99-main-server-consoleblank.cfg")
 ALLOWED = {
     "packages", "cli_boot", "console_blank", "ssh", "linger",
@@ -86,8 +85,8 @@ def status() -> dict[str, Any]:
             "detail": "사용자 systemd 서비스 등록",
         },
         "model_mounts": {
-            "label": "모델 디스크 고정 마운트", "applied": bool(_mount_source(MODEL_MOUNT) and _mount_source(COMFY_MODEL_MOUNT)),
-            "detail": f"{MODEL_MOUNT} · {COMFY_MODEL_MOUNT}",
+            "label": "모델 디스크 고정 마운트", "applied": bool(_mount_source(MODEL_MOUNT)),
+            "detail": f"{MODEL_MOUNT}",
         },
         "nas": {
             "label": "NAS 자동 마운트", "applied": bool(nas_state.get("mounted")),

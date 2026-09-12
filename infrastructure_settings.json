@@ -2,7 +2,7 @@
   "server_root": "/home/flux",
   "model_root": "/mnt/main-server-models/model",
   "comfyui_dir": "/home/flux/ComfyUI",
-  "comfyui_model_root": "/mnt/main-server-comfy/ComfyUI_windows_portable/ComfyUI/models",
+  "comfyui_model_root": "/home/flux/ComfyUI/models",
   "llama_install_root": "/opt/llama",
   "cmpunlocker_profile": "8gb",
   "cmpunlocker_profile_mode_version": 2,
