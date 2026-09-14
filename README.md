@@ -1,6 +1,16 @@
 # AI Server Manager
 
-한 대의 GPU 서버에서 `llama.cpp`, ComfyUI, vLLM과 주변 도구를 한 화면으로 운영하기 위한 FastAPI 기반 관리 대시보드입니다. Linux와 Windows를 모두 지원하며, 서비스 실행·중지, GPU/VRAM 관찰, 모델 관리, 미디어·데이터셋 작업, 원격 인스턴스 연결을 웹 UI에서 처리합니다.
+**개인 GPU 워크스테이션을 하나의 AI 인프라 플랫폼으로 바꾸는 크로스플랫폼 운영 콘솔**입니다. `llama.cpp`, ComfyUI, vLLM을 포함한 10여 개 AI 워크로드의 배포·실행·관찰·자원 조정을 단일 FastAPI 애플리케이션으로 통합했습니다.
+
+단순한 프로세스 실행기를 넘어, GPU별 VRAM admission/eviction, 하드웨어 텔레메트리, 모델·데이터셋 파이프라인, OpenAI 호환 API 벤치마크, NAS와 원격 GPU 인스턴스까지 연결하는 **self-hosted AI operations control plane**을 지향합니다. Linux와 Windows의 서로 다른 서비스·권한·하드웨어 제어 방식을 하나의 웹 UX로 추상화했습니다.
+
+### Project highlights
+
+- **Cross-platform orchestration** — Ubuntu systemd와 Windows supervisor/UAC helper를 같은 관리 경험으로 통합
+- **GPU-aware scheduling** — NVML 실측과 GPU별 상태 머신을 이용해 ComfyUI·llama.cpp 간 VRAM 경합을 자동 조정
+- **End-to-end AI workflow** — 모델 확보부터 추론 서버 실행, 데이터셋 구축, 미디어 처리, 성능 검증까지 한 제품 안에서 수행
+- **Long-context benchmarking** — 최대 컨텍스트 자동 탐지와 1K~252K 단계별 TTFT/prefill/decode 측정 지원
+- **Operational safety** — GPU UUID 기반 설정, 권한 제한 helper, 확인 헤더, 프로세스 세대 관리와 종료 검증 적용
 
 > 이 프로젝트는 시스템 전원, GPU 설정, 프로세스와 파일을 제어할 수 있습니다. 기본 서버는 인증 없이 `0.0.0.0:8999`에 바인딩되므로 인터넷에 직접 노출하지 말고 신뢰할 수 있는 로컬 네트워크, 방화벽 또는 별도의 인증 프록시 뒤에서만 사용하세요.
 
@@ -16,6 +26,56 @@
 - **LLM 벤치마크**: OpenAI 호환 API의 TTFT, prefill 및 decode 처리량 측정
 - **Vast Remote**: Vast.ai Jupyter 인스턴스에서 llama.cpp/ComfyUI 실행과 로컬 터널 관리
 - **웹 터미널**: 브라우저에서 서버별 터미널 세션 관리
+
+## 검증된 운영 스냅샷
+
+저장소에 포함된 최신 측정 데이터는 OpenAI 호환 vLLM 엔드포인트에서 모델의 **262,144 토큰 최대 컨텍스트를 자동 탐지**하고, 1K~64K 단계 테스트와 150K 장문 테스트를 완료한 결과입니다.
+
+| 시나리오 | 측정 결과 |
+| --- | ---: |
+| 1K~64K 상세 벤치마크 최고 prefill | **3,457.5 tok/s** |
+| 1K 구간 decode | **141.5 tok/s** |
+| 150K 실제 프롬프트 처리 | **149,995 tokens** |
+| 150K prefill / decode | **3,227.3 / 126.8 tok/s** |
+
+VRAM Arbiter는 고정 추정치에만 의존하지 않고 실제 peak를 학습합니다. 현재 스냅샷에는 두 ComfyUI 인스턴스의 관측 peak 약 **31.1 GB / 18.2 GB**와 다중 GPU 구성이 저장되어 이후 admission 판단에 재사용됩니다. 수치는 해당 장비·모델·설정에서 얻은 실측값이며 다른 환경의 성능을 보장하지 않습니다.
+
+## 아키텍처
+
+```mermaid
+flowchart LR
+    UI[Web Dashboard] --> API[FastAPI + WebSocket]
+    API --> PM[Service Lifecycle Manager]
+    API --> ARB[GPU VRAM Arbiter]
+    API --> HUB[Model / Dataset / Media Pipelines]
+    API --> SYS[OS-specific Privileged Helpers]
+    PM --> LLM[llama.cpp / vLLM / Unsloth]
+    PM --> COMFY[ComfyUI Instances]
+    ARB --> NVML[NVML Telemetry]
+    ARB --> LLM
+    ARB --> COMFY
+    HUB --> STORAGE[Local Disks / NAS / Hugging Face]
+    SYS --> HW[GPU / Fans / UEFI / Power]
+    API --> REMOTE[Vast.ai Remote GPU]
+```
+
+| 계층 | 기술 및 설계 |
+| --- | --- |
+| Backend | Python, FastAPI, Uvicorn, asyncio, REST, WebSocket |
+| Frontend | 의존성 없는 HTML/CSS/JavaScript 대시보드, 실시간 로그·터미널 |
+| GPU | NVML, `nvidia-smi`, GPU UUID 기반 영속 설정, VRAM 상태 머신 |
+| Runtime | llama.cpp, vLLM, ComfyUI, Hugging Face Hub, OpenAI-compatible API |
+| System | systemd user service, Windows supervisor, C# 관리자 helper, sudo allowlist |
+| Storage/Remote | NAS/CIFS, 로컬 모델 저장소, Vast.ai Jupyter 터널 |
+
+### 핵심 엔지니어링
+
+- **GPU별 독립 동시성 제어**: 전역 잠금 대신 GPU 도메인별 lock/queue와 `UNLOADED → RESIDENT → ACTIVE` 상태 전이를 사용해 서로 다른 카드의 작업이 불필요하게 막히지 않습니다.
+- **실측 기반 VRAM 계획**: NVML을 최종 기준으로 삼고, 첫 작업의 peak를 학습해 다음 요청부터 공존 가능성을 최적화합니다. 미관리 CUDA 프로세스의 사용량도 판단에 포함합니다.
+- **안전한 프로세스 수명 주기**: PID 파일만 신뢰하지 않고 명령행과 프로세스 생존 여부를 검증하며, 시작/중지 generation으로 중복 실행과 늦게 도착한 종료 요청을 방지합니다.
+- **최소 권한 하드웨어 제어**: 웹 서버 자체를 관리자 권한으로 실행하지 않고, Linux sudo allowlist와 Windows 토큰 인증 helper에 위험 작업을 격리합니다.
+- **장애 복구 중심 운영**: 저장된 GPU 설정 재적용, 서비스 자동 재시작, fan lease 만료 시 펌웨어 제어 복귀, 실행 중 작업 상태 복원 등 재부팅·비정상 종료를 고려했습니다.
+- **재현 가능한 성능 측정**: prefix cache miss를 유도하는 유니크 프롬프트, 서버 토크나이저 보정, 스트리밍 TTFT와 decode 분리 측정으로 엔진 간 비교 가능한 결과를 저장합니다.
 
 ## 빠른 시작
 

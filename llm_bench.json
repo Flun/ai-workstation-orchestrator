@@ -1,6 +1,24 @@
 {
   "cards": [
     {
+      "id": "99001a927176",
+      "title": "새 벤치마크 09-13 07:30",
+      "created_at": "2026-09-13T07:30:25+09:00",
+      "api_url": "http://127.0.0.1:8000/v1",
+      "source": "auto",
+      "source_label": "vLLM · 슬롯 test2",
+      "engine": "vLLM",
+      "model": "qwen3.8-flash-next",
+      "max_context": 262144,
+      "probed_at": "2026-09-13T07:34:52+09:00",
+      "conc": false,
+      "users": 4,
+      "models": [
+        "qwen3.8-flash-next"
+      ],
+      "max_context_source": "/v1/models.max_model_len"
+    },
+    {
       "id": "261f4a9dd4f5",
       "title": "새 벤치마크 09-10 21:08",
       "created_at": "2026-09-10T21:08:55+09:00",
@@ -74,6 +92,150 @@
     }
   ],
   "results": [
+    {
+      "id": "148c8ae66113",
+      "card_id": "99001a927176",
+      "card_title": "새 벤치마크 09-13 07:30",
+      "kind": "long150k",
+      "kind_label": "150k 장문",
+      "started_at": "2026-09-13T07:34:52+09:00",
+      "finished_at": "2026-09-13T07:35:40+09:00",
+      "duration_s": 48.0,
+      "partial": false,
+      "meta": {
+        "api_url": "http://127.0.0.1:8000/v1",
+        "engine": "vLLM",
+        "serving": "vLLM · 슬롯 test2",
+        "model": "qwen3.8-flash-next",
+        "max_context": 262144,
+        "gen_tokens": 128,
+        "users": 1,
+        "server_cold": false
+      },
+      "stages": [
+        {
+          "target_tokens": 150000,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 149995,
+          "ttft_s": 46.477,
+          "pp_tok_s": 3227.3,
+          "decode_tok_s": 126.8,
+          "decode_tokens": 128,
+          "total_s": 47.479
+        }
+      ],
+      "summary": {
+        "pp_tok_s": 3227.3,
+        "decode_tok_s": 126.8,
+        "best_pp_tok_s": 3227.3
+      }
+    },
+    {
+      "id": "0c9d3a93803c",
+      "card_id": "99001a927176",
+      "card_title": "새 벤치마크 09-13 07:30",
+      "kind": "detailed",
+      "kind_label": "상세 벤치마크 (1k→64k)",
+      "started_at": "2026-09-13T07:30:49+09:00",
+      "finished_at": "2026-09-13T07:31:35+09:00",
+      "duration_s": 46.5,
+      "partial": false,
+      "meta": {
+        "api_url": "http://127.0.0.1:8000/v1",
+        "engine": "vLLM",
+        "serving": "vLLM · 슬롯 test2",
+        "model": "qwen3.8-flash-next",
+        "max_context": 262144,
+        "gen_tokens": 128,
+        "users": 1,
+        "server_cold": false
+      },
+      "stages": [
+        {
+          "target_tokens": 1024,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 1015,
+          "ttft_s": 0.498,
+          "pp_tok_s": 2037.3,
+          "decode_tok_s": 141.5,
+          "decode_tokens": 128,
+          "total_s": 1.396
+        },
+        {
+          "target_tokens": 2048,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 2041,
+          "ttft_s": 0.722,
+          "pp_tok_s": 2828.1,
+          "decode_tok_s": 111.0,
+          "decode_tokens": 128,
+          "total_s": 1.866
+        },
+        {
+          "target_tokens": 4096,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 4108,
+          "ttft_s": 1.296,
+          "pp_tok_s": 3168.8,
+          "decode_tok_s": 104.1,
+          "decode_tokens": 128,
+          "total_s": 2.517
+        },
+        {
+          "target_tokens": 8192,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 8191,
+          "ttft_s": 2.409,
+          "pp_tok_s": 3399.8,
+          "decode_tok_s": 101.2,
+          "decode_tokens": 128,
+          "total_s": 3.664
+        },
+        {
+          "target_tokens": 16384,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 16381,
+          "ttft_s": 4.738,
+          "pp_tok_s": 3457.5,
+          "decode_tok_s": 128.9,
+          "decode_tokens": 128,
+          "total_s": 5.723
+        },
+        {
+          "target_tokens": 32768,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 32757,
+          "ttft_s": 9.49,
+          "pp_tok_s": 3451.9,
+          "decode_tok_s": 131.2,
+          "decode_tokens": 128,
+          "total_s": 10.457
+        },
+        {
+          "target_tokens": 65536,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 65521,
+          "ttft_s": 19.332,
+          "pp_tok_s": 3389.2,
+          "decode_tok_s": 121.1,
+          "decode_tokens": 128,
+          "total_s": 20.381
+        }
+      ],
+      "summary": {
+        "pp_tok_s": 2037.3,
+        "decode_tok_s": 121.1,
+        "best_pp_tok_s": 3457.5
+      }
+    },
     {
       "id": "1566a53aca32",
       "card_id": "261f4a9dd4f5",
