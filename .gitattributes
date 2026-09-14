@@ -1,0 +1,7 @@
+# The dashboard pages are UI assets served by the Python application.
+# Keep repository language statistics focused on the application/runtime code.
+*.html linguist-detectable=false
+
+# Bundled third-party browser assets and historical snapshots are not authored code.
+vendor/** linguist-vendored
+.bak_multi_comfy/** linguist-generated
