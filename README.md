@@ -1,4 +1,4 @@
-# AI Server Manager
+# AI Workstation Orchestrator
 
 **개인 GPU 워크스테이션을 하나의 AI 인프라 플랫폼으로 바꾸는 크로스플랫폼 운영 콘솔**입니다. `llama.cpp`, ComfyUI, vLLM을 포함한 10여 개 AI 워크로드의 배포·실행·관찰·자원 조정을 단일 FastAPI 애플리케이션으로 통합했습니다.
 
@@ -84,8 +84,8 @@ flowchart LR
 필수 조건은 NVIDIA 드라이버가 설치된 Ubuntu, Python 3, `sudo` 권한입니다. 설치 스크립트는 패키지 설치뿐 아니라 systemd 사용자 서비스, SSH, 모델 볼륨/NAS 준비, GPU 제어 helper와 부팅 모드까지 구성합니다. 실행 전에 [`setup_env.sh`](setup_env.sh)의 변경 범위를 확인하세요.
 
 ```bash
-git clone https://github.com/Flun/main_server_new.git
-cd main_server_new
+git clone https://github.com/Flun/ai-workstation-orchestrator.git
+cd ai-workstation-orchestrator
 ./setup_env.sh
 ```
 
@@ -109,8 +109,8 @@ journalctl --user -u main_server.service -f
 Python과 Microsoft App Installer(`winget`)가 필요합니다. 초기 설정은 Git/GitHub CLI와 Python 의존성을 설치하고, 관리자 권한이 필요한 팬·GPU·UEFI 작업용 helper를 빌드합니다.
 
 ```bat
-git clone https://github.com/Flun/main_server_new.git
-cd main_server_new
+git clone https://github.com/Flun/ai-workstation-orchestrator.git
+cd ai-workstation-orchestrator
 setup_env.bat
 start_manager.bat
 ```
@@ -152,7 +152,7 @@ python app.py
 
 | 서비스 | 포트 |
 | --- | ---: |
-| AI Server Manager | `8999` |
+| AI Workstation Orchestrator | `8999` |
 | llama.cpp | `8080` |
 | ComfyUI main / GPU 1 | `8188` / `8189` |
 | vLLM | `8000` |

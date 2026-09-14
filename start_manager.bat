@@ -3,7 +3,7 @@ setlocal
 cd /d "%~dp0"
 if exist ".manager-stop" del /q ".manager-stop"
 if exist ".venv\Scripts\pythonw.exe" (set "PY=.venv\Scripts\pythonw.exe") else (set "PY=python")
-echo == AI Server Manager (port 8999) ==
+echo == AI Workstation Orchestrator (port 8999) ==
 rem 프론트는 즉시 시작하고 GPU/NAS/팬 초기화는 app.py 백그라운드에서 처리
 timeout /t 1 >nul
 :loop

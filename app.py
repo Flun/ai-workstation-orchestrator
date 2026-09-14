@@ -151,7 +151,7 @@ STATE = {
     "gguf_models": [],
 }
 
-app = FastAPI(title="AI Server Manager", docs_url=None, redoc_url=None)
+app = FastAPI(title="AI Workstation Orchestrator", docs_url=None, redoc_url=None)
 app.include_router(model_hub_router)
 app.include_router(media_router)
 app.include_router(dataset_router)

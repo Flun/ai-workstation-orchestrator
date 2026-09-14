@@ -1,5 +1,5 @@
 [Unit]
-Description=AI Server Manager (main_server, port 8999)
+Description=AI Workstation Orchestrator (main_server, port 8999)
 After=network-online.target
 Wants=network-online.target
 
