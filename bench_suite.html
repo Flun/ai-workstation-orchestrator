@@ -85,7 +85,7 @@
   <div v-if="error" class="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300" @click="error=''">{{ error }}</div>
 
   <div v-if="!cards.length" class="panel flex flex-col items-center gap-3 px-6 py-16 text-center">
-    <p class="text-sm text-zinc-500">카드를 추가해 벤치 대상 서버와 벤치 종료를 고르세요. 실행 결과는 카드에 누적 기록됩니다.</p>
+    <p class="text-sm text-zinc-500">카드를 추가해 벤치 대상 서버와 벤치 종류를 고르세요. 실행 결과는 카드에 누적 기록됩니다.</p>
     <div class="flex gap-2">
       <button class="button primary" :disabled="!tools.lib_ready" @click="addCard('lib')">+ llm-inference-bench 카드</button>
       <button class="button primary" :disabled="!tools.lmeval_ready" @click="addCard('lme')">+ lm-eval-harness 카드</button>
@@ -307,7 +307,7 @@
   </div>
 
   <p class="mt-8 text-center text-[11px] leading-relaxed text-zinc-600">
-    llm-inference-bench: 동시성×컨텍스트 행렬의 지속 디코드 처리량(스마트 스킵, KV 예산 자동 감지) — decode는 sustained, 헤드리인 프리필은 scout TTFT 기준<br>
+    llm-inference-bench: 동시성×컨텍스트 행렬의 지속 디코드 처리량(스마트 스킵, KV 예산 자동 감지) — decode는 sustained, 헤드리인은 scout TTFT 기준<br>
     lm-evaluation-harness: 표준 벤치 태스크 정확도(acc/acc_norm 등, 로그로그리들리 기반) — 태스크마다 수분이 걸릴 수 있습니다 · 한 번에 하나의 외부 벤치만 실행됩니다
   </p>
 </div>
