@@ -68,15 +68,21 @@ class FanMappingTests(unittest.TestCase):
         self.assertTrue(profiles["gpu0"]["enabled"])
         self.assertFalse(profiles["gpu1"]["enabled"])
 
-    def test_duplicate_gpu_and_cpu_channels_rejected_without_writing(self):
+    def test_shared_gpu_and_cpu_channels_are_saved(self):
+        self.save()
+        fan.save_settings({"gpu_uuid": "gpu1", "enabled": True, "channel_id": "pwm3",
+                           "fan_role": "gpu_hbm"})
+        saved = fan.save_settings({"cpu": {"enabled": True, "channel_id": "pwm3"}})
+        self.assertEqual(saved["gpu_profiles"]["gpu0"]["channel_id"], "pwm3")
+        self.assertEqual(saved["gpu_profiles"]["gpu1"]["channel_id"], "pwm3")
+        self.assertEqual(saved["cpu"]["channel_id"], "pwm3")
+
+    def test_invalid_profile_is_rejected_without_writing(self):
         self.save()
         before = self.settings.read_bytes()
-        for values in ({"gpu_uuid": "gpu1", "enabled": True, "channel_id": "pwm3"},
-                       {"cpu": {"enabled": True, "channel_id": "pwm3"}},
-                       {"gpu_uuid": "gpu0", "min_percent": 101}):
-            with self.subTest(values=values), self.assertRaises(ValueError):
-                fan.save_settings(values)
-            self.assertEqual(self.settings.read_bytes(), before)
+        with self.assertRaises(ValueError):
+            fan.save_settings({"gpu_uuid": "gpu0", "min_percent": 101})
+        self.assertEqual(self.settings.read_bytes(), before)
 
     def test_concurrent_saves_do_not_lose_updates(self):
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
@@ -108,7 +114,34 @@ class FanMappingTests(unittest.TestCase):
         controller.helper.request.reset_mock()
         controller.tick([{"uuid": "gpu0", "temp_memory": 40}])
         self.assertTrue(controller._runtime["profiles"]["gpu:gpu0"]["active"])
-        self.assertFalse(controller._runtime["profiles"]["gpu:gpu1"]["active"])
+        self.assertNotIn("gpu:gpu1", controller._runtime["profiles"])
+
+    def test_shared_channel_uses_highest_requested_pwm_once(self):
+        self.save()
+        self.save("gpu1", "pwm3")
+        controller = self.controller()
+        controller.tick([{"uuid": "gpu0", "temp_memory": 40},
+                         {"uuid": "gpu1", "temp_memory": 85}])
+        set_requests = [call.args[0] for call in controller.helper.request.call_args_list
+                        if call.args[0].get("command") == "set"]
+        self.assertEqual(set_requests, [{"command": "set", "id": "pwm3", "percent": 100}])
+        profiles = controller._runtime["profiles"]
+        self.assertEqual(profiles["gpu:gpu0"]["requested_percent"], 40)
+        self.assertEqual(profiles["gpu:gpu0"]["target_percent"], 100)
+        self.assertEqual(profiles["gpu:gpu1"]["target_percent"], 100)
+
+    def test_removed_gpu_profile_is_ignored_in_favor_of_connected_gpus(self):
+        self.save("removed-gpu", "pwm3")
+        self.save("connected-gpu", "pwm4")
+        controller = self.controller()
+        controller.tick([{"uuid": "connected-gpu", "temp_memory": 65}])
+        profiles = controller._runtime["profiles"]
+        self.assertNotIn("gpu:removed-gpu", profiles)
+        self.assertTrue(profiles["gpu:connected-gpu"]["active"])
+        self.assertIsNone(controller._runtime["error"])
+        set_requests = [call.args[0] for call in controller.helper.request.call_args_list
+                        if call.args[0].get("command") == "set"]
+        self.assertEqual(set_requests, [{"command": "set", "id": "pwm4", "percent": 60}])
 
     def test_reconfigure_releases_replaced_channel(self):
         self.save()

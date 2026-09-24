@@ -396,7 +396,7 @@
                 </div>
                 <div v-else class="mt-3">
                   <div class="mb-3 flex flex-wrap gap-2">
-                    <button v-for="(profile, uuid) in motherboardFans.settings?.gpu_profiles || {}" :key="uuid" @click="motherboardFanEdit.gpu_uuid=uuid; selectMotherboardFanGpu()" :disabled="motherboardFanSaving" class="rounded border border-indigo-500/30 px-3 py-2 text-xs text-indigo-300">
+                    <button v-for="(profile, uuid) in connectedMotherboardFanProfiles" :key="uuid" @click="motherboardFanEdit.gpu_uuid=uuid; selectMotherboardFanGpu()" :disabled="motherboardFanSaving" class="rounded border border-indigo-500/30 px-3 py-2 text-xs text-indigo-300">
                       {{ gpuTuning.gpus.find(gpu => gpu.uuid === uuid)?.index != null ? 'GPU ' + gpuTuning.gpus.find(gpu => gpu.uuid === uuid).index : uuid }} → {{ fanChannelSummary(profile.channel_id) }} · {{ profile.enabled ? '자동 사용' : '꺼짐' }}
                     </button>
                   </div>
@@ -1862,9 +1862,14 @@
                 };
             },
             computed: {
+                connectedMotherboardFanProfiles() {
+                    const profiles = this.motherboardFans.settings?.gpu_profiles || {};
+                    const connected = new Set((this.gpuTuning?.gpus || []).map(gpu => gpu.uuid));
+                    return Object.fromEntries(Object.entries(profiles).filter(([uuid]) => connected.has(uuid)));
+                },
                 // 각 GPU 프로필마다 현재 팬 상태를 칩 하나로 (gpu0/gpu1 모두 표시).
                 motherboardFanGpuChips() {
-                    const profiles = this.motherboardFans.settings?.gpu_profiles || {};
+                    const profiles = this.connectedMotherboardFanProfiles;
                     const runtimeProfiles = this.motherboardFans.runtime?.profiles || {};
                     const gpus = this.gpuTuning?.gpus || [];
                     return Object.entries(profiles).map(([uuid, profile]) => {

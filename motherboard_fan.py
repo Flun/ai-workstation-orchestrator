@@ -188,12 +188,6 @@ def validate_settings(values: dict[str, Any]) -> dict[str, Any]:
     cpu_values["fan_role"] = "cpu_package"
     cpu_values["gpu_uuid"] = ""
     result["cpu"] = _validate_profile(cpu_values, cpu=True)
-    channels = set()
-    for profile in [*profiles.values(), result["cpu"]]:
-        if profile.get("enabled"):
-            if profile["channel_id"] in channels:
-                raise ValueError("GPU별 팬과 CPU 팬은 서로 다른 메인보드 채널을 선택해야 합니다")
-            channels.add(profile["channel_id"])
     return result
 
 
@@ -405,7 +399,18 @@ class FanController:
                 return
             config = load_settings()
             cpu_config = config.get("cpu") or {}
-            gpu_profiles = config["gpu_profiles"]
+            all_gpu_profiles = config["gpu_profiles"]
+            connected_uuids = {str(gpu.get("uuid") or "") for gpu in gpus}
+            # Settings can outlive a removed/replaced GPU. Only currently
+            # connected UUIDs participate in fan control; stale profiles are
+            # retained as harmless history and never reported as runtime errors.
+            gpu_profiles = {
+                uuid: profile for uuid, profile in all_gpu_profiles.items()
+                if uuid in connected_uuids
+            }
+            stale_profile_keys = {
+                "gpu:" + uuid for uuid in all_gpu_profiles if uuid not in connected_uuids
+            }
             if not any(p.get("enabled") for p in gpu_profiles.values()) and not cpu_config.get("enabled"):
                 if self._runtime.get("active"):
                     try:
@@ -430,12 +435,20 @@ class FanController:
                 return
 
             runtimes: dict[str, dict[str, Any]] = {}
+            active_channels = {
+                profile["channel_id"]
+                for profile in [*gpu_profiles.values(), cpu_config]
+                if profile.get("enabled")
+            }
+            for key in stale_profile_keys:
+                if key in self._profile_state:
+                    self._disable_profile(key, active_channels)
             for uuid, profile in gpu_profiles.items():
                 key = "gpu:" + uuid
                 if key not in self._profile_state:
                     self._reset_profile_state(key)
                 if not profile.get("enabled"):
-                    runtimes[key] = self._disable_profile(key)
+                    runtimes[key] = self._disable_profile(key, active_channels)
                     continue
                 gpu = next((item for item in gpus if item.get("uuid") == uuid), None)
                 if not gpu:
@@ -466,7 +479,29 @@ class FanController:
                 except Exception as error:
                     runtimes["cpu"] = self._profile_error("cpu", cpu_config, str(error))
             else:
-                runtimes["cpu"] = self._disable_profile("cpu")
+                runtimes["cpu"] = self._disable_profile("cpu", active_channels)
+
+            # A physical channel may intentionally be shared by multiple GPU/CPU
+            # profiles. Apply the highest requested PWM once so profile iteration
+            # order cannot make a hotter device lose control of the fan.
+            channel_runtimes: dict[str, list[dict[str, Any]]] = {}
+            for runtime in runtimes.values():
+                if runtime.get("active") and runtime.get("channel_id"):
+                    channel_runtimes.setdefault(runtime["channel_id"], []).append(runtime)
+            for channel_id, members in channel_runtimes.items():
+                requested = max(member["requested_percent"] for member in members)
+                try:
+                    response = self.helper.request({
+                        "command": "set", "id": channel_id, "percent": requested,
+                    })
+                    applied = int(round(float(response.get("percent", requested))))
+                    for member in members:
+                        member["target_percent"] = applied
+                except Exception as error:
+                    for member in members:
+                        member["active"] = False
+                        member["target_percent"] = None
+                        member["error"] = str(error)
 
             # Keep the legacy summary useful even if the last edited GPU is off.
             runtimes["gpu"] = next(
@@ -489,9 +524,9 @@ class FanController:
                 "last_percent": None, "last_temp": None, "down_since": None, "channel_id": "",
             }
 
-    def _disable_profile(self, key: str) -> dict[str, Any]:
+    def _disable_profile(self, key: str, active_channels: set[str] | None = None) -> dict[str, Any]:
         state = self._profile_state[key]
-        if state.get("channel_id"):
+        if state.get("channel_id") and state["channel_id"] not in (active_channels or set()):
             try:
                 self.helper.request({"command": "reset", "id": state["channel_id"]})
             except Exception:
@@ -529,15 +564,14 @@ class FanController:
                     target = state["last_percent"]
             else:
                 state["down_since"] = None
-            response = self.helper.request({"command": "set", "id": config["channel_id"], "percent": target})
-            applied = int(round(float(response.get("percent", target))))
-            if state["last_percent"] is None or applied != state["last_percent"]:
+            if state["last_percent"] is None or target != state["last_percent"]:
                 state["last_temp"] = temperature
-            state["last_percent"] = applied
+            state["last_percent"] = target
             state["channel_id"] = config["channel_id"]
             return {
                 "active": True, "temperature": None if sensor_error else temperature,
-                "target_percent": applied, "calculated_percent": calculated,
+                "target_percent": target, "requested_percent": target,
+                "calculated_percent": calculated,
                 "curve_mode": config["curve_mode"], "channel_id": config["channel_id"],
                 "hold_reason": hold_reason, "down_delay_remaining": down_delay_remaining,
                 "error": sensor_error, "updated_at": time.time(), **extra,
