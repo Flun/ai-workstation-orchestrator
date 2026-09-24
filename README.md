@@ -25,6 +25,7 @@
 - **Audio / Video Text**: Qwen3-ASR·ForcedAligner·Whisper 기반 자막, Omni 오디오 캡션과 멀티모달 타임라인
 - **데이터셋 도구**: 이미지 수집·검수·복구·내보내기와 Instagram/X 쿠키 연동
 - **LLM 벤치마크**: OpenAI 호환 API의 TTFT, prefill 및 decode 처리량 측정
+- **Serving Stats**: 실행 중인 vLLM/llama.cpp/ComfyUI의 실시간 처리량·지연·캐시 지표 대시보드
 - **Vast Remote**: Vast.ai Jupyter 인스턴스에서 llama.cpp/ComfyUI 실행과 로컬 터널 관리
 - **웹 터미널**: 브라우저에서 서버별 터미널 세션 관리
 

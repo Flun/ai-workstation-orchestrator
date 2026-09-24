@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Serving Stats · AI Infrastructure Console</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<style>
+  [v-cloak] { display:none; }
+  body { background:#09090b; color:#e4e4e7; font-family:Inter,ui-sans-serif,system-ui,sans-serif; }
+  .panel { background:rgba(24,24,27,.82); border:1px solid #27272a; border-radius:16px; }
+  .mono { font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .pill { border-radius:10px; padding:.5rem 1rem; font-size:.82rem; font-weight:650; border:1px solid #3f3f46; color:#a1a1aa; background:transparent; transition:.15s; }
+  .pill:hover { border-color:#818cf8; color:#e4e4e7; }
+  .pill.active { background:#6ee7b7; color:#09090b; border-color:transparent; }
+  .dot { width:.6rem; height:.6rem; border-radius:999px; display:inline-block; box-shadow:0 0 8px currentColor; }
+  .dot-on { background:#4ade80; color:#4ade80; }
+  .dot-off { background:#52525b; color:transparent; box-shadow:none; }
+  .dot-err { background:#f87171; color:#f87171; }
+  .metric { background:#141922; border:1px solid rgba(255,255,255,.06); border-radius:14px; padding:1.1rem 1.25rem; }
+  .metric .label { color:#8b949e; text-transform:uppercase; letter-spacing:.1em; font-size:.68rem; font-weight:600; }
+  .metric .value { font-family:'JetBrains Mono',ui-monospace,monospace; font-size:2rem; font-weight:700; margin:.3rem 0 .1rem; line-height:1.1; white-space:nowrap; }
+  .metric .unit { font-size:.85rem; color:#8b949e; font-weight:400; margin-left:.3rem; }
+  .metric .sub { color:#9aa1ab; font-size:.72rem; }
+  .green { color:#4ade80; }
+  ::-webkit-scrollbar { width:8px; height:8px; }
+  ::-webkit-scrollbar-thumb { background:#3f3f46; border-radius:10px; }
+</style>
+</head>
+<body>
+<div id="app" v-cloak class="mx-auto min-h-screen max-w-[1400px] px-4 py-5 md:px-7">
+  <header class="mb-5 flex flex-wrap items-end justify-between gap-4">
+    <div>
+      <div class="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[.2em] text-emerald-400">
+        <span class="h-2 w-2 rounded-full bg-emerald-400"></span> AI Infrastructure Console
+      </div>
+      <h1 class="text-2xl font-semibold tracking-tight text-zinc-50">Serving Stats</h1>
+      <p class="mt-1 text-sm text-zinc-500">실행 중인 서빙 서비스의 실시간 처리량 · 지연 · 캐시 지표 (읽기 전용)</p>
+    </div>
+    <div class="flex flex-wrap items-center gap-2">
+      <button class="pill" @click="refresh()">↻ 새로고침</button>
+      <a href="/llm-bench" class="pill no-underline">LLM Benchmark</a>
+      <a href="/" class="pill no-underline">← 대시보드</a>
+    </div>
+  </header>
+
+  <!-- 서버 선택 + 상태 라인 -->
+  <section class="mb-5">
+    <div class="mb-3 flex flex-wrap items-center gap-2">
+      <button v-for="s in servers" :key="s.key" class="pill" :class="{active: s.key === activeKey}" @click="activeKey = s.key">
+        {{ s.label }}
+      </button>
+      <span v-if="!servers.length" class="text-sm text-zinc-600">실행 중인 서빙 서비스가 없습니다 — vLLM / llama.cpp / ComfyUI를 먼저 켜세요</span>
+    </div>
+    <div v-if="active" class="flex flex-wrap items-center gap-5 text-sm">
+      <span class="flex items-center gap-2"><span class="dot" :class="active.online ? 'dot-on' : 'dot-err'"></span>
+        {{ active.online ? 'online' : 'offline' }}</span>
+      <span class="mono text-xs text-zinc-500">{{ active.url }}</span>
+      <span v-if="active.model" class="mono text-xs text-zinc-500 truncate max-w-[420px]" :title="active.model">{{ active.model }}</span>
+      <span v-if="active.engine !== 'ComfyUI'" class="text-zinc-400 mono text-xs">
+        running {{ m('running', 0) }} · waiting {{ m('waiting', 0) }}</span>
+      <span class="ml-auto mono text-xs text-zinc-600">{{ clock }} · poll {{ pollAge }}s ago</span>
+    </div>
+    <div v-if="active && active.error" class="mt-2 text-xs text-rose-400 mono">{{ active.error }}</div>
+  </section>
+
+  <div v-if="active">
+    <!-- LLM 지표 카드 -->
+    <section v-if="active.engine !== 'ComfyUI'" class="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4">
+      <div class="metric">
+        <div class="label">Prefill</div>
+        <div class="value">{{ fmt(m('prefill_tps'), 1) }}<span class="unit">t/s</span></div>
+        <div class="sub">prompt 처리 처리량</div>
+      </div>
+      <div class="metric">
+        <div class="label">Decode</div>
+        <div class="value">{{ fmt(m('decode_tps'), 1) }}<span class="unit">t/s</span></div>
+        <div class="sub">{{ active.metrics.req_decode_p50_s != null ? '요청 p50 ' + fmtDur(active.metrics.req_decode_p50_s) : '생성 처리량' }}</div>
+      </div>
+      <div class="metric">
+        <div class="label">Cache Hit</div>
+        <div class="value green" v-if="m('cache_hit_pct') != null">{{ fmt(m('cache_hit_pct'), 0) }}<span class="unit">%</span></div>
+        <div class="value" v-else>—</div>
+        <div class="sub">prefix 캐시 적중률</div>
+      </div>
+      <div class="metric">
+        <div class="label">TTFT P95</div>
+        <div class="value">{{ fmtSec(m('ttft_p95_s')) }}<span class="unit" v-if="m('ttft_p95_s') != null">{{ secUnit(m('ttft_p95_s')) }}</span></div>
+        <div class="sub">{{ m('ttft_p50_s') != null ? 'p50 ' + fmtDur(m('ttft_p50_s')) : '첫 토큰까지' }}</div>
+      </div>
+      <div class="metric" v-if="active.engine === 'vLLM'">
+        <div class="label">KV Cache</div>
+        <div class="value" :class="{green: (m('kv_usage') || 0) > 0}">{{ pct100(m('kv_usage')) }}<span class="unit" v-if="m('kv_usage') != null">%</span></div>
+        <div class="sub">GPU KV 블록 사용량</div>
+      </div>
+      <div class="metric" v-if="m('spec_accept_pct') != null">
+        <div class="label">Spec Accept</div>
+        <div class="value green">{{ fmt(m('spec_accept_pct'), 0) }}<span class="unit">%</span></div>
+        <div class="sub">추측 디코딩 수용률</div>
+      </div>
+      <div class="metric">
+        <div class="label">Requests</div>
+        <div class="value">{{ fmt(m('req_per_min'), 1) }}<span class="unit">/min</span></div>
+        <div class="sub">최근 도착 속도</div>
+      </div>
+      <div class="metric" v-if="m('preemptions') != null">
+        <div class="label">Preemptions</div>
+        <div class="value">{{ fmt(m('preemptions'), 0) }}</div>
+        <div class="sub">누적 선점 (KV 압박)</div>
+      </div>
+    </section>
+
+    <!-- ComfyUI 지표 카드 -->
+    <section v-else class="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4">
+      <div class="metric">
+        <div class="label">Queue</div>
+        <div class="value" :class="{green: (m('queue_running') || 0) > 0}">{{ m('queue_running', 0) }}<span class="unit">생성 중</span></div>
+        <div class="sub">대기 {{ m('queue_pending', 0) }}</div>
+      </div>
+      <div class="metric" v-for="dev in (active.metrics.devices || [])" :key="dev.name">
+        <div class="label">{{ dev.name }}</div>
+        <div class="value">{{ fmt(dev.vram_used_mb / 1024, 1) }}<span class="unit">/ {{ fmt(dev.vram_total_mb / 1024, 0) }} GB</span></div>
+        <div class="sub">VRAM 사용량</div>
+      </div>
+    </section>
+
+    <!-- 추이 차트 (체류 서버만) -->
+    <section v-if="active.engine !== 'ComfyUI' && active.online" class="mt-5 grid gap-4 lg:grid-cols-2">
+      <div class="panel px-5 py-4">
+        <div class="mb-2 flex items-baseline justify-between">
+          <span class="text-xs font-semibold uppercase tracking-wider text-zinc-500">처리량 추이 · t/s</span>
+          <span class="text-[10px] text-zinc-600 mono">최근 {{ historyLen }}회 폴링</span>
+        </div>
+        <canvas ref="tpsChart" height="120"></canvas>
+      </div>
+      <div class="panel px-5 py-4">
+        <div class="mb-2 flex items-baseline justify-between">
+          <span class="text-xs font-semibold uppercase tracking-wider text-zinc-500">KV Cache 사용률 · %</span>
+          <span class="text-[10px] text-zinc-600 mono">request 실행 중일 때만 상승</span>
+        </div>
+        <canvas ref="kvChart" height="120"></canvas>
+      </div>
+    </section>
+
+    <p v-if="active.metrics_note" class="mt-4 text-xs text-amber-400">{{ active.metrics_note }}</p>
+    <p class="mt-5 text-[11px] leading-relaxed text-zinc-600">
+      속도·히트율 카드는 2회 폴링 델타 기준이라 서비스 가동 직후 첫 폴링에서는 비어 있습니다. TTFT P95는 llama.cpp가 메트릭을 제공하지 않아 vLLM 전용입니다.
+    </p>
+  </div>
+</div>
+
+<script>
+const { createApp } = Vue;
+const POLL_MS = 2000;
+const HISTORY = 150;   // 2s × 150 ≈ 5분 창
+
+createApp({
+  data() {
+    return { servers: [], activeKey: '', clock: '', fetchedAt: 0, pollAge: 0,
+             history: {},  // key -> {t:[], prefill:[], decode:[], kv:[]}
+             copied: false };
+  },
+  computed: {
+    active() { return this.servers.find(s => s.key === this.activeKey) || null; },
+    hist() { return this.history[this.activeKey] || { t: [], prefill: [], decode: [], kv: [] }; },
+    historyLen() { return this.hist.t.length; },
+  },
+  methods: {
+    m(name, dflt = null) {
+      if (!this.active) return dflt;
+      const v = this.active.metrics?.[name];
+      return v == null ? dflt : v;
+    },
+    fmt(v, digits) {
+      if (v == null || !isFinite(v)) return '—';
+      return v.toLocaleString('ko-KR', { maximumFractionDigits: digits, minimumFractionDigits: digits });
+    },
+    fmtSec(v) {
+      if (v == null || !isFinite(v)) return '—';
+      if (v < 1) return (v * 1000).toFixed(0);   // <1s는 ms로 읽히게
+      return v.toFixed(1);
+    },
+    secUnit(v) { return v == null || !isFinite(v) ? '' : (v < 1 ? 'ms' : 's'); },
+    fmtDur(v) { return v == null || !isFinite(v) ? '—' : this.fmtSec(v) + ' ' + this.secUnit(v); },
+    pct100(v) { return v == null ? '—' : (v * 100).toFixed(0); },
+    async refresh() {
+      try {
+        const res = await fetch('/api/serving-stats');
+        const data = await res.json();
+        this.servers = data.servers;
+        this.fetchedAt = Date.now();
+        // 활성 키 유지: 사라진 서버면 첫 번째로
+        if (!this.servers.some(s => s.key === this.activeKey))
+          this.activeKey = this.servers[0]?.key || '';
+        const a = this.servers.find(s => s.key === this.activeKey);
+        if (a && a.online && a.engine !== 'ComfyUI') {
+          const h = this.history[a.key] ||= { t: [], prefill: [], decode: [], kv: [] };
+          const push = (arr, v) => { arr.push(v == null ? null : v); if (arr.length > HISTORY) arr.shift(); };
+          const t = new Date();
+          h.t.push(t.getHours() + ':' + String(t.getMinutes()).padStart(2, '0') + ':' + String(t.getSeconds()).padStart(2, '0'));
+          push(h.prefill, a.metrics.prefill_tps ?? null);
+          push(h.decode, a.metrics.decode_tps ?? null);
+          push(h.kv, a.metrics.kv_usage != null ? a.metrics.kv_usage * 100 : null);
+          while (h.t.length > HISTORY) h.t.shift();
+          this.$nextTick(() => this.renderCharts());
+        }
+      } catch (e) { /* 폴링 실패는 다음 틱이 복구 */ }
+      this.clock = new Date().toLocaleTimeString('ko-KR', { hour12: false });
+      this.pollAge = 0;
+    },
+    renderCharts() {
+      if (!window.Chart || !this.$refs.tpsChart) return;
+      const grid = 'rgba(63,63,66,.35)', tick = '#71717a';
+      const mk = (ref, datasets, yTitle) => {
+        if (!this[ref + '_']) this[ref + '_'] = new Chart(this.$refs[ref], {
+          type: 'line',
+          data: { labels: [...this.hist.t], datasets },
+          options: {
+            animation: false, responsive: true,
+            interaction: { mode: 'index', intersect: false },
+            plugins: { legend: { labels: { color: '#a1a1aa', boxWidth: 12, font: { size: 10 } } } },
+            scales: {
+              x: { ticks: { color: tick, maxTicksLimit: 8, font: { size: 9 } }, grid: { color: grid } },
+              y: { beginAtZero: true, ticks: { color: tick, font: { size: 9 } }, grid: { color: grid }, title: { display: !!yTitle, text: yTitle, color: tick } },
+            },
+          },
+        });
+        const c = this[ref + '_'];
+        c.data.labels = [...this.hist.t];
+        c.data.datasets.forEach(ds => {
+          const src = ds.hermesSrc;
+          ds.data = [...this.hist[src]];
+        });
+        c.update('none');
+      };
+      if (this.active?.engine === 'ComfyUI') return;
+      mk('tpsChart', [
+        { label: 'Prefill t/s', hermesSrc: 'prefill', data: [...this.hist.prefill], borderColor: '#818cf8', backgroundColor: 'rgba(129,140,248,.12)', fill: true, tension: .3, pointRadius: 0, borderWidth: 1.6 },
+        { label: 'Decode t/s', hermesSrc: 'decode', data: [...this.hist.decode], borderColor: '#4ade80', backgroundColor: 'rgba(74,222,128,.10)', fill: true, tension: .3, pointRadius: 0, borderWidth: 1.6 },
+      ], 't/s');
+      mk('kvChart', [
+        { label: 'KV %', hermesSrc: 'kv', data: [...this.hist.kv], borderColor: '#f472b6', backgroundColor: 'rgba(244,114,182,.12)', fill: true, tension: .3, pointRadius: 0, borderWidth: 1.6 },
+      ], '%');
+    },
+  },
+  mounted() {
+    this.refresh();
+    setInterval(() => this.refresh(), POLL_MS);
+    setInterval(() => { if (this.fetchedAt) this.pollAge = Math.round((Date.now() - this.fetchedAt) / 1000); }, 1000);
+  },
+}).mount('#app');
+</script>
+</body>
+</html>

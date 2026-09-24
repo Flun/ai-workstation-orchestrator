@@ -61,6 +61,7 @@ import vram_arbiter
 from vram_arbiter import router as gpu_arbiter_router, proxy_router as gpu_arbiter_proxy_router
 import llm_bench
 import bench_suite
+import serving_stats
 
 HOST = "0.0.0.0"
 PORT = 8999
@@ -168,6 +169,7 @@ app.include_router(gpu_arbiter_router)
 app.include_router(gpu_arbiter_proxy_router)
 app.include_router(llm_bench.router)
 app.include_router(bench_suite.router)
+app.include_router(serving_stats.router)
 
 
 # ---------- 유틸 ----------
@@ -1672,6 +1674,14 @@ def bench_suite_page():
     )
 
 
+@app.get("/serving-stats", response_class=HTMLResponse)
+def serving_stats_page():
+    return FileResponse(
+        os.path.join(BASE_DIR, "serving_stats.html"),
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
 # ---------- 벤더 스크립트 ----------
 # xterm.js 계열은 CDN(jsdelivr)이 들쭉날쭉 끊겨 터미널 탭이 조용히 안 뜨는
 # 일이 있어서, pin된 버전을 repo의 vendor/ 에 들여와 앱이 직접 서빙한다.
@@ -2074,6 +2084,26 @@ def _bench_llm_services():
 
 llm_bench.set_service_discovery(_bench_llm_services)
 bench_suite.set_service_discovery(_bench_llm_services)
+serving_stats.set_llm_discovery(_bench_llm_services)
+
+
+def _serving_comfy_services():
+    """serving_stats용 ComfyUI 인스턴스 요약. 꺼진 인스턴스는 폴링하지 않는다."""
+    payload = {}
+    for instance in COMFY_INSTANCES:
+        info = _comfy_instances_payload().get(instance) or {}
+        service_name = COMFY_SERVICE_BY_INSTANCE[instance]
+        try:
+            running = bool(_service_state(service_name).get("running"))
+        except Exception:
+            running = False
+        info = dict(info)
+        info["running"] = running
+        payload[instance] = info
+    return payload
+
+
+serving_stats.set_comfy_discovery(_serving_comfy_services)
 
 
 def _comfy_instances_payload():
