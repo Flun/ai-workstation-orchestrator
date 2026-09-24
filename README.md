@@ -143,9 +143,11 @@ python app.py
 | `/` | 서비스 상태, 하드웨어, 로그, 터미널과 전원 제어 |
 | `/model-hub` | 모델 다운로드와 파일 관리 |
 | `/media` | 미디어 다운로드·변환·AI 처리 |
+| `/av-text` | 로컬 GPU 음성 인식·오디오 캡션·영상 분석 |
 | `/dataset` | 이미지 데이터셋 수집과 검수 |
 | `/infrastructure` | 런타임 설치, NAS, Git 및 시스템 설정 |
 | `/llm-bench` | LLM API 성능 측정과 결과 비교 |
+| `/bench-suite` | 외부 벤치(llm-evaluation-harness 정확도 · llm-inference-bench 동시성 매트릭스) — 카드·실행 기록 보관 |
 | `/vast` | Vast.ai 원격 인스턴스 관리(로컬 접속만 허용) |
 
 기본 서비스 포트는 다음과 같습니다.
@@ -214,9 +216,12 @@ gpu.py                 NVIDIA GPU 상태와 VRAM 프로세스 탐색
 vram_arbiter.py        GPU별 VRAM admission/eviction 조정
 model_hub.py           모델 다운로드와 파일 관리 API
 media.py               미디어 다운로드·변환 API
+media_analysis.py      Audio/Video 분석 작업·캐시·서비스 제어 API
+media_analysis_service.py  격리된 모델 inference 서비스
 dataset_api.py         데이터셋 작업 API
 infrastructure.py      설치, NAS, vLLM 및 시스템 통합 API
 llm_bench.py           OpenAI 호환 LLM 벤치마크
+bench_suite.py         외부 벤치 도구(lm-eval/llm-inference-bench) 실행·결과 파싱
 system/                Linux 서비스와 권한 제한 helper 원본
 fan_helper/            Windows 관리자 권한 하드웨어 helper
 ```
