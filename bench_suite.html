@@ -184,10 +184,16 @@
             <button class="button muted !py-1 !text-[11px]" :disabled="running" @click="run(card,'lme_quick')">스모크 (3태스크×200)</button>
             <button class="button muted !py-1 !text-[11px]" :disabled="running" @click="run(card,'lme_standard')">표준 5태스크 (전체)</button>
           </div>
-          <label class="block text-[11px] text-zinc-500">태스크 (쉼표 구분)
-            <input class="input mono !mt-0.5 !py-1 !text-xs" v-model="card.lme.tasks" list="lme-tasks" @change="patchCard(card,{lme:card.lme})"
+          <label class="block text-[11px] text-zinc-500">태스크 (직접 입력 또는 아래 추가/삭제)
+            <input class="input mono !mt-0.5 !py-1 !text-xs" v-model="card.lme.tasks" list="lme-tasks" @change="patchCard(card,{lme:{tasks:card.lme.tasks}})"
                    placeholder="arc_easy,gsm8k,mmlu…">
           </label>
+          <div class="mt-1.5 flex flex-wrap items-center gap-1">
+            <span v-for="t in taskList(card)" :key="t" class="chip inline-flex items-center gap-1.5 border border-fuchsia-500/40 bg-fuchsia-500/10 text-fuchsia-200">
+              {{ t }}<button class="text-fuchsia-400/70 hover:text-rose-300" @click="removeTask(card,t)" :title="t + ' 제거'">✕</button>
+            </span>
+            <span v-if="!taskList(card).length" class="text-[10px] text-zinc-600">태스크 없음 — 아래 + 버튼으로 추가</span>
+          </div>
           <div class="mt-1.5 flex flex-wrap gap-1">
             <button v-for="g in popularTasks" :key="g" class="chip border border-zinc-700 bg-zinc-900 text-zinc-400 hover:border-fuchsia-500/60"
                     @click="addTask(card,g)">+ {{ g }}</button>
@@ -203,7 +209,6 @@
           <button class="button primary mt-2 !py-1.5 !text-[11px]" :disabled="running || !card.service_key" @click="run(card,'lme_custom')">위 값으로 커스텀 실행</button>
           <p class="mt-1.5 text-[10px] leading-relaxed text-zinc-600">vLLM은 /tokenizer_info가 없어 토크나이저 경로가 필요합니다 · llama.cpp는 gguf 백엔드(슬롯 병렬 자동 감지, chat template 미지원)로 실행됩니다.</p>
         </div>
-        <datalist id="lme-tasks"><option v-for="t in taskNames" :key="t" :value="t"></option></datalist>
 
         <!-- 실행 중 -->
         <div v-if="jobFor(card.id)" class="rounded-xl border border-teal-500/30 bg-teal-500/10 px-4 py-3">
@@ -295,6 +300,8 @@
     </section>
   </div>
 
+  <datalist id="lme-tasks"><option v-for="t in taskNames" :key="t" :value="t"></option></datalist>
+
   <!-- 로그 모달 -->
   <div v-if="logContent" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6" @click.self="logContent=''">
     <div class="panel max-h-[80vh] w-full max-w-4xl overflow-hidden">
@@ -342,10 +349,35 @@ createApp({
       return j;
     },
     fail(e) { this.error = String(e.message || e); },
-    async refresh() {
+    // 입력 중인지: 카드 그리드 안에 포커스된 입력 요소가 있으면 카드 병합을 건너뛴다
+    // (2.5초 폴링이 타이핑 중인 값을 서버 값으로 덮어쓰는 것 방지).
+    editing() {
+      const a = document.activeElement;
+      const root = document.getElementById('app');
+      return !!(a && root && root.contains(a) && ['INPUT', 'SELECT', 'TEXTAREA'].includes(a.tagName)
+                && a.closest('div.grid'));
+    },
+    // 서버에서 온 카드를 로컬 객체에 id 병합 — 배열째 교체 대신 Object.assign으로
+    // DOM/포커스/caret을 보존한다. 편집 중이면 사용자 입력 필드는 건드리지 않는다.
+    applyCards(incoming, force) {
+      const map = new Map(this.cards.map(c => [c.id, c]));
+      const skip = !force && this.editing();
+      const next = [];
+      for (const c of incoming) {
+        const local = map.get(c.id);
+        if (!local) { next.push(c); continue; }
+        for (const [k, v] of Object.entries(c)) {
+          if (skip && ['title', 'tokenizer', 'lib', 'lme', 'model', 'use_chat_template'].includes(k)) continue;
+          local[k] = v;
+        }
+        next.push(local);
+      }
+      this.cards = next;
+    },
+    async refresh(force) {
       try {
         const d = await this.api('/api/bench-suite');
-        this.cards = d.cards || [];
+        this.applyCards(d.cards || [], force);
         this.results = d.results || [];
         this.jobs = (d.jobs || []).filter(j => j.status === 'running');
         for (const j of this.jobs) this.fetchLogTail(j);
@@ -375,19 +407,19 @@ createApp({
       } catch (e) { this.fail(e); }
     },
     async patchCard(card, patch) {
-      try { await this.api('/api/bench-suite/cards/' + card.id, { method: 'PATCH', body: patch }); await this.refresh(); }
+      try { await this.api('/api/bench-suite/cards/' + card.id, { method: 'PATCH', body: patch }); await this.refresh(true); }
       catch (e) { this.fail(e); }
     },
     async pickService(card, svc) {
       try {
         await this.api('/api/bench-suite/cards/' + card.id, { method: 'PATCH', body: { service_key: svc.key } });
-        await this.refresh();
+        await this.refresh(true);
       } catch (e) { this.fail(e); }
     },
     async reprobe(card) {
       try {
         await this.api('/api/bench-suite/cards/' + card.id, { method: 'PATCH', body: { service_key: card.service_key } });
-        await this.refresh();
+        await this.refresh(true);
       } catch (e) { this.fail(e); }
     },
     async run(card, preset) {
@@ -430,14 +462,19 @@ createApp({
     resultsFor(cardId) { return this.results.filter(r => r.card_id === cardId); },
     modelsOf(card) { return this.models[card.id] || (card.models || []); },
     isVllm(card) { return (card.engine || '').toLowerCase().includes('vllm'); },
+    taskList(card) { return (card.lme.tasks || '').split(',').map(x => x.trim()).filter(Boolean); },
     addTask(card, g) {
-      const cur = (card.lme.tasks || '').split(',').map(x => x.trim()).filter(Boolean);
+      const cur = this.taskList(card);
       const cand = this.taskNames.length ? [g, ...this.taskNames.filter(t => t.startsWith(g))] : [g];
       const pick = cand.find(t => !cur.includes(t));
       if (!pick) return;
       cur.push(pick);
       card.lme.tasks = cur.join(',');
-      this.patchCard(card, { lme: card.lme });
+      this.patchCard(card, { lme: { tasks: card.lme.tasks } });
+    },
+    removeTask(card, t) {
+      card.lme.tasks = this.taskList(card).filter(x => x !== t).join(',');
+      this.patchCard(card, { lme: { tasks: card.lme.tasks } });
     },
     metricColumns(r) {
       const seen = new Set();
