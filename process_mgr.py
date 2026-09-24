@@ -132,6 +132,7 @@ class Service:
             return {
                 "running": True, "pid": self.pid, "uptime": round(uptime),
                 "phase": self.phase, "generation": self.generation,
+                "device": list(self.device) if isinstance(self.device, (list, tuple)) else self.device,
             }
         return {
             "running": False, "pid": None, "uptime": 0,

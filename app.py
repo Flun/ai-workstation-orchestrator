@@ -42,6 +42,7 @@ from gpu import (
 )
 from model_hub import router as model_hub_router
 from media import router as media_router
+from media_analysis import SERVICES as media_analysis_services, router as media_analysis_router
 from dataset_api import router as dataset_router
 from vast_api import router as vast_router
 from process_mgr import Service, find_process, tail
@@ -101,6 +102,9 @@ services = {
     "omp": Service("omp"),
     "omp_web": Service("omp_web"),
     "deepseek_harness": Service("deepseek_harness"),
+    "media_analysis_asr": media_analysis_services["asr"],
+    "media_analysis_caption": media_analysis_services["caption"],
+    "media_analysis_video": media_analysis_services["video"],
 }
 
 STARTED_AT = time.time()
@@ -155,6 +159,7 @@ STATE = {
 app = FastAPI(title="AI Workstation Orchestrator", docs_url=None, redoc_url=None)
 app.include_router(model_hub_router)
 app.include_router(media_router)
+app.include_router(media_analysis_router)
 app.include_router(dataset_router)
 app.include_router(vast_router)
 app.include_router(infrastructure_router)
@@ -2136,6 +2141,9 @@ def gpus():
         "watcher": configured_devices(services["watcher"].device or []),
         "vllm": configured_devices(services["vllm"].device or []),
         "unsloth": configured_devices(services["unsloth"].device or []),
+        "media_analysis_asr": configured_devices(services["media_analysis_asr"].device or []),
+        "media_analysis_caption": configured_devices(services["media_analysis_caption"].device or []),
+        "media_analysis_video": configured_devices(services["media_analysis_video"].device or []),
     }
     service_defs = {
             "comfyui": {"label": "ComfyUI(메인)", "color": "amber"},
@@ -2145,6 +2153,9 @@ def gpus():
             "watcher": {"label": "와처", "color": "violet"},
             "vllm": {"label": "vLLM", "color": "rose"},
             "unsloth": {"label": "Unsloth", "color": "lime"},
+            "media_analysis_asr": {"label": "Media ASR", "color": "violet"},
+            "media_analysis_caption": {"label": "Audio Caption", "color": "fuchsia"},
+            "media_analysis_video": {"label": "Video Analysis", "color": "cyan"},
     }
     topo["services"] = {}
     for name, definition in service_defs.items():

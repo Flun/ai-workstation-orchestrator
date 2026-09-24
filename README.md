@@ -22,6 +22,7 @@
 - **모델 허브**: Hugging Face/Civitai 모델 다운로드, 설치 모델 검색, 파일 업로드·이동·삭제
 - **인프라 관리**: ComfyUI·vLLM 환경 설치, NAS 연결, Git/GitHub 설정, Linux GUI/CLI 모드 및 재부팅 대상 관리
 - **미디어 도구**: URL 미디어 다운로드, ffmpeg 기반 변환, 선택형 AI 음성 분리
+- **Audio / Video Text**: Qwen3-ASR·ForcedAligner·Whisper 기반 자막, Omni 오디오 캡션과 멀티모달 타임라인
 - **데이터셋 도구**: 이미지 수집·검수·복구·내보내기와 Instagram/X 쿠키 연동
 - **LLM 벤치마크**: OpenAI 호환 API의 TTFT, prefill 및 decode 처리량 측정
 - **Vast Remote**: Vast.ai Jupyter 인스턴스에서 llama.cpp/ComfyUI 실행과 로컬 터널 관리
@@ -191,6 +192,12 @@ AI 음성 분리가 필요하면 별도 의존성을 설치합니다.
 ```
 
 Windows에서는 `setup_media_ai.bat`을 사용합니다. ffmpeg/ffprobe가 없으면 미디어 변환 기능이 제한됩니다.
+
+로컬 GPU Audio/Video → Text 모델은 메인 환경과 분리해 설치합니다. 자세한 구조와 API는 [`MEDIA_ANALYSIS.md`](MEDIA_ANALYSIS.md)를 참고하세요.
+
+```bash
+./setup_media_analysis.sh
+```
 
 CMP 170HX와 vLLM의 전용 구성은 [`VLLM_CMP170HX.md`](VLLM_CMP170HX.md), VRAM Arbiter의 운영 원리는 [`ARBITER_GPU_DOMAIN.md`](ARBITER_GPU_DOMAIN.md)를 참고하세요.
 

@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="ko" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio / Video Text</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>tailwind.config={darkMode:'class',theme:{extend:{fontFamily:{sans:['Inter','sans-serif'],mono:['JetBrains Mono','monospace']},colors:{zinc:{850:'#202022',950:'#09090b'}}}}}</script>
+    <style>
+        [v-cloak]{display:none} body{background:#09090b;color:#e4e4e7}.panel{border:1px solid #27272a;background:rgba(24,24,27,.72);border-radius:.75rem}.field{width:100%;min-width:0;border:1px solid #3f3f46;background:#09090b;border-radius:.45rem;padding:.55rem .7rem;color:#f4f4f5;outline:none}.field:focus{border-color:#8b5cf6}.toggle input{accent-color:#8b5cf6}::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-thumb{background:#3f3f46;border-radius:10px}
+    </style>
+</head>
+<body class="min-h-screen p-4 selection:bg-violet-500/30 sm:p-8">
+<main id="app" v-cloak class="mx-auto max-w-[1400px] space-y-6">
+    <header class="flex flex-col gap-4 border-b border-zinc-800 pb-6 sm:flex-row sm:items-center sm:justify-between">
+        <div class="flex items-center gap-4">
+            <a href="/" class="flex h-10 w-10 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 text-zinc-400 hover:text-white" title="대시보드">←</a>
+            <div><h1 class="text-2xl font-semibold tracking-tight text-zinc-100">Audio / Video Text</h1><p class="mt-1 text-sm text-zinc-500">로컬 GPU 음성 인식 · 오디오 캡션 · 영상 이해</p></div>
+        </div>
+        <div class="flex items-center gap-2">
+            <span class="rounded-full border px-3 py-1 text-xs" :class="status.ffmpeg?'border-emerald-500/30 text-emerald-300':'border-rose-500/30 text-rose-300'">FFmpeg {{status.ffmpeg?'Ready':'Missing'}}</span>
+            <button @click="settingsOpen=!settingsOpen" class="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800">서비스 설정</button>
+        </div>
+    </header>
+
+    <section class="grid gap-3 md:grid-cols-3">
+        <article v-for="role in roles" :key="role.key" class="panel p-4">
+            <div class="flex items-start justify-between gap-3"><div><h2 class="text-sm font-semibold text-zinc-200">{{role.label}}</h2><p class="mt-1 text-xs text-zinc-500">{{placementLabel(role.key)}} · :{{settings.ports?.[role.key]}}</p></div><span class="h-2.5 w-2.5 rounded-full" :class="service(role.key).ready?'bg-emerald-400':service(role.key).running?'bg-amber-400':'bg-zinc-600'"></span></div>
+            <p class="mt-3 text-[11px] text-zinc-500">{{role.description}}</p>
+            <div class="mt-3 rounded-lg border border-zinc-800 bg-zinc-950/50 p-2.5">
+                <div class="flex items-center justify-between gap-2"><span class="text-[10px] uppercase tracking-wider text-zinc-500">GPU 선택</span><span v-if="gpuChangePending(role.key)" class="text-[10px] text-amber-400">서버 버튼 재실행 시 새 GPU로 재시작</span></div>
+                <div class="mt-1.5 flex flex-wrap gap-1.5">
+                    <button v-for="gpu in status.available_gpus||[]" :key="role.key+'-gpu-'+gpu.index" @click="toggleGpu(role.key,String(gpu.index))" :disabled="serviceBusy" class="rounded border px-2 py-1 text-[10px] disabled:opacity-40" :class="gpuPick(role.key).includes(String(gpu.index))?'border-sky-500/60 bg-sky-500/15 text-sky-200':'border-zinc-700 bg-zinc-950 text-zinc-400 hover:border-zinc-600'">GPU{{gpu.index}}<span class="ml-1 text-zinc-500">여유 {{formatBytes((gpu.vram_free||0)*1048576)}}</span></button>
+                    <span v-if="!(status.available_gpus||[]).length" class="text-[10px] text-zinc-600">GPU 정보 없음</span>
+                </div>
+            </div>
+            <p class="mt-2 text-[11px]" :class="roleEnabled(role.key)?'text-emerald-400':'text-amber-400'">{{roleEnabled(role.key)?modelRuntimeLabel(role.key):'모델 비활성 · 서비스 설정에서 활성화 필요'}}</p>
+            <div class="mt-4 grid grid-cols-3 gap-2"><button @click="control(role.key,'start')" :disabled="serviceBusy" class="rounded border border-emerald-500/30 bg-emerald-500/10 py-1.5 text-[11px] text-emerald-300 disabled:opacity-40">서버</button><button @click="control(role.key,'load')" :disabled="serviceBusy || !roleEnabled(role.key)" class="rounded border border-sky-500/30 bg-sky-500/10 py-1.5 text-[11px] text-sky-300 disabled:opacity-40">GPU 로드</button><button @click="control(role.key,'stop')" :disabled="serviceBusy" class="rounded border border-rose-500/30 bg-rose-500/10 py-1.5 text-[11px] text-rose-300 disabled:opacity-40">중지</button></div>
+            <button @click="useRole(role.key)" :disabled="!roleEnabled(role.key)" class="mt-2 w-full rounded border border-violet-500/30 bg-violet-500/10 py-1.5 text-xs text-violet-300 disabled:cursor-not-allowed disabled:opacity-30">이 서비스로 분석 설정</button>
+            <p v-if="service(role.key).health_error && service(role.key).running" class="mt-2 truncate text-[10px] text-amber-400" :title="service(role.key).health_error">{{service(role.key).health_error}}</p>
+        </article>
+    </section>
+
+    <section v-if="settingsOpen" class="panel p-5">
+        <div class="mb-4 flex items-center justify-between"><div><h2 class="font-semibold">Inference service 설정</h2><p class="mt-1 text-xs text-zinc-500">모델별 활성화와 GPU 배치를 저장합니다. 변경 후 해당 서비스를 재시작하세요.</p></div><button @click="saveSettings" :disabled="saving" class="rounded-lg bg-violet-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">{{saving?'저장 중':'저장'}}</button></div>
+        <div class="grid gap-4 lg:grid-cols-3">
+            <label class="text-xs text-zinc-400 lg:col-span-2">격리 Python 환경<input v-model="settings.python" class="field mt-1 font-mono text-xs"></label>
+            <div class="space-y-2 pb-1 text-sm text-zinc-300"><label class="toggle flex items-center gap-2"><input type="checkbox" v-model="settings.auto_start"> 요청 시 서비스 자동 시작</label><label class="toggle flex items-center gap-2"><input type="checkbox" v-model="settings.parallel"> ASR / Caption 병렬 실행</label></div>
+            <label v-for="role in roles" :key="'gpu-'+role.key" class="text-xs text-zinc-400">{{role.label}} GPU<input v-model="settings.gpus[role.key]" class="field mt-1" placeholder="0 또는 0,1"></label>
+            <label class="text-xs text-zinc-400">일반 결과 보관 기간<input v-model.number="settings.result_retention_days" type="number" min="1" max="3650" class="field mt-1"><span class="mt-1 block text-[10px] text-zinc-600">일 · 영구 저장 결과는 자동 삭제하지 않음</span></label>
+        </div>
+        <div class="mt-4 flex flex-wrap gap-4 text-xs text-zinc-400"><label v-for="role in roles" :key="'unload-'+role.key" class="toggle flex items-center gap-2"><input type="checkbox" v-model="settings.unload_after_processing[role.key]"> {{role.label}} 작업 후 unload</label></div>
+        <div class="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+            <label v-for="model in modelToggles" :key="model.key" class="toggle rounded-lg border border-zinc-800 bg-zinc-950/50 p-3 text-xs text-zinc-300"><span class="flex items-center gap-2"><input type="checkbox" v-model="settings[model.setting].enabled"> {{model.label}}</span><span class="mt-2 block text-[10px] text-zinc-600">{{settings[model.setting].model}}</span></label>
+        </div>
+    </section>
+
+    <section class="panel p-5">
+        <div class="flex flex-wrap items-center justify-between gap-3"><div><h2 class="font-semibold">최근 분석 결과 <span class="text-xs font-normal text-zinc-600">{{history.length}}</span></h2><p class="mt-1 text-xs text-zinc-500">작은 결과 파일은 {{historyRetention}}일간 보관합니다. 고정한 결과는 자동 삭제되지 않습니다.</p></div><div class="flex gap-2"><button v-if="history.length>6" @click="historyExpanded=!historyExpanded" class="rounded border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800">{{historyExpanded?'접기':'전체 보기'}}</button><button @click="loadHistory" class="rounded border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800">새로고침</button></div></div>
+        <div v-if="history.length" class="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            <article v-for="item in visibleHistory" :key="item.job_id" class="rounded-lg border border-zinc-800 bg-zinc-950/50 p-4 hover:border-zinc-700">
+                <button @click="openHistory(item)" class="w-full text-left"><div class="flex items-start justify-between gap-2"><span class="truncate text-sm font-medium text-zinc-200">{{item.filename}}</span><span v-if="item.permanent" class="shrink-0 rounded bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-300">영구</span></div><p class="mt-1 text-[10px] text-zinc-500">{{modeLabel(item.mode)}} · {{item.backend || 'result'}} · {{clock(item.duration)}} · {{dateTime(item.completed_at)}}</p><p class="mt-3 line-clamp-3 text-xs leading-5 text-zinc-400">{{item.preview || '텍스트 미리보기 없음'}}</p></button>
+                <div class="mt-3 flex items-center justify-between border-t border-zinc-800 pt-3"><span class="text-[10px] text-zinc-600">{{formatBytes(item.size_bytes)}}</span><div class="flex gap-2"><button @click="togglePermanent(item)" class="rounded border border-zinc-700 px-2 py-1 text-[10px] text-zinc-400">{{item.permanent?'일반 보관':'영구 저장'}}</button><button @click="deleteHistory(item)" class="rounded border border-rose-500/30 px-2 py-1 text-[10px] text-rose-300">삭제</button></div></div>
+            </article>
+        </div>
+        <p v-else class="mt-4 rounded-lg border border-dashed border-zinc-800 p-6 text-center text-xs text-zinc-600">아직 저장된 분석 결과가 없습니다.</p>
+    </section>
+
+    <section class="grid gap-6 lg:grid-cols-[380px_minmax(0,1fr)]">
+        <aside class="space-y-5">
+            <div class="panel p-5">
+                <label @dragover.prevent @drop.prevent="dropFile" class="flex min-h-44 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed p-6 text-center" :class="file?'border-violet-500/60 bg-violet-500/5':'border-zinc-700 hover:border-zinc-600'">
+                    <input type="file" class="hidden" accept="video/*,audio/*,.mkv,.webm,.flac,.opus" @change="pickFile">
+                    <svg class="mb-3 h-9 w-9 text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6" d="M7 16a4 4 0 01-.88-7.903A5.5 5.5 0 0116.9 6H17a5 5 0 010 10h-1m-4-5v9m0-9-3 3m3-3 3 3"></path></svg>
+                    <template v-if="file"><span class="max-w-full truncate text-sm font-medium text-zinc-100">{{file.name}}</span><span class="mt-1 text-xs text-zinc-500">{{formatBytes(file.size)}}</span></template>
+                    <template v-else><span class="text-sm font-medium">Audio / Video 선택</span><span class="mt-1 text-xs text-zinc-500">클릭하거나 파일을 놓으세요</span></template>
+                </label>
+                <div v-if="mediaUrl" class="mt-4 overflow-hidden rounded-lg border border-zinc-800 bg-black">
+                    <video v-if="isVideo" ref="mediaPlayer" :src="mediaUrl" controls preload="metadata" class="max-h-72 w-full bg-black" @loadedmetadata="mediaLoaded"></video>
+                    <audio v-else ref="mediaPlayer" :src="mediaUrl" controls preload="metadata" class="w-full" @loadedmetadata="mediaLoaded"></audio>
+                    <div class="flex items-center justify-between px-3 py-2 text-[11px] text-zinc-500"><span>업로드 전 로컬 미리보기</span><span v-if="mediaDuration">{{clock(mediaDuration)}}</span></div>
+                </div>
+            </div>
+
+            <div class="panel space-y-4 p-5">
+                <div><label class="text-xs font-semibold uppercase tracking-wider text-zinc-500">Processing Pipeline</label><div class="mt-2 grid gap-2"><button v-for="item in modes" :key="item.value" @click="form.mode=item.value" :disabled="!modeAvailable(item.value)" class="rounded-lg border p-3 text-left disabled:cursor-not-allowed disabled:opacity-35" :class="form.mode===item.value?'border-violet-500 bg-violet-500/10':'border-zinc-800 bg-zinc-950/50 hover:border-zinc-700'"><span class="block text-xs font-semibold" :class="form.mode===item.value?'text-violet-300':'text-zinc-300'">{{item.label}}</span><span class="mt-1 block text-[10px] text-zinc-500">{{item.description}}</span></button></div></div>
+                <label v-if="usesAsr" class="block text-xs text-zinc-400">Speech Transcription Model<select v-model="form.asr_model" class="field mt-1"><option value="qwen3-asr" :disabled="!settings.qwen3_asr?.enabled">Qwen3-ASR 1.7B + Aligner</option><option value="whisper-large-v3" :disabled="!settings.whisper?.enabled">Whisper large-v3</option><option value="raon-speech" :disabled="!settings.raon?.enabled">Raon-Speech 9B (non-commercial)</option></select><span class="mt-1 block text-[10px] text-zinc-600">대사의 source of truth</span></label>
+                <label v-if="usesCaption" class="block text-xs text-zinc-400">Audio Caption Model<select v-model="form.caption_model" class="field mt-1"><option value="qwen3-omni-captioner">Qwen3-Omni-30B-A3B-Captioner</option></select><span class="mt-1 block text-[10px] text-amber-500/80">말 이외의 소리·감정·환경을 설명</span></label>
+                <label v-if="usesVideo" class="block text-xs text-zinc-400">Video Analysis Model<select v-model="form.video_model" class="field mt-1"><option value="qwen3-omni-video">Qwen3-Omni-30B-A3B-Instruct</option></select><span class="mt-1 block text-[10px] text-sky-500/80">영상 프레임 분석 · 대사는 빠른 ASR 결과와 병합 · 1장 64GB에는 들어가지 않아 두 GPU 사용</span></label>
+                <label v-if="usesVideo" class="toggle flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-[11px] leading-5 text-amber-200/80"><input type="checkbox" v-model="form.full_audio_caption" class="mt-1"><span><strong>배경음까지 별도 분석</strong><br>켜면 Audio Captioner를 추가 실행합니다. 약 60GB 모델을 순차 로드하므로 처리 시간이 크게 늘어납니다.</span></label>
+                <div class="grid grid-cols-2 gap-3"><label v-if="usesAsr" class="text-xs text-zinc-400">Language<select v-model="form.language" class="field mt-1"><option value="ko">한국어</option><option value="auto">자동 감지</option><option value="en">English</option><option value="ja">日本語</option><option value="zh">中文</option></select></label><label class="text-xs text-zinc-400" :class="usesAsr?'':'col-span-2'">분할 길이<select v-model.number="form.chunk_size" class="field mt-1"><option :value="15">15초</option><option :value="30">30초 · 권장</option><option :value="60">60초</option></select></label></div>
+                <div class="rounded-lg border border-sky-500/20 bg-sky-500/5 p-3 text-[11px] leading-5 text-sky-200/80"><strong>전체 길이 제한이 아닙니다.</strong> 파일 끝까지 {{form.chunk_size}}초 단위로 반복 분석한 뒤 시간축을 이어 붙입니다.<span v-if="estimatedChunks"> 현재 파일은 overlap 기준 약 {{estimatedChunks}}개 chunk입니다.</span></div>
+                <div v-if="usesAsr" class="grid grid-cols-2 gap-2 text-xs text-zinc-400"><label class="toggle flex items-center gap-2"><input type="checkbox" v-model="form.timestamps"> Timestamps</label><label class="toggle flex items-center gap-2"><input type="checkbox" v-model="form.word_timestamps"> Word level</label><label class="toggle flex items-center gap-2"><input type="checkbox" v-model="form.vad"> VAD</label><label class="toggle flex items-center gap-2"><input type="checkbox" v-model="form.condition_on_previous_text"> Previous context</label></div>
+                <details class="rounded-lg border border-zinc-800 p-3"><summary class="cursor-pointer text-xs text-zinc-400">고급 옵션</summary><div class="mt-3 space-y-3"><label v-if="usesAsr" class="block text-xs text-zinc-500">Beam size<input v-model.number="form.beam_size" type="number" min="1" max="20" class="field mt-1"></label><label class="block text-xs text-zinc-500">Overlap (sec)<input v-model.number="form.overlap" type="number" min="0" max="10" class="field mt-1"></label><label v-if="usesAsr" class="block text-xs text-zinc-500">Initial prompt<textarea v-model="form.initial_prompt" rows="2" class="field mt-1 resize-y"></textarea></label></div></details>
+                <button @click="start" :disabled="!file || busy || form.mode==='off'" class="w-full rounded-lg bg-violet-500 py-2.5 text-sm font-semibold text-white hover:bg-violet-400 disabled:cursor-not-allowed disabled:opacity-40">{{busy?'분석 중...':'분석 시작'}}</button>
+                <button v-if="busy" @click="cancel" class="w-full rounded-lg border border-rose-500/30 py-2 text-xs text-rose-300">작업 취소</button>
+            </div>
+        </aside>
+
+        <section class="space-y-5">
+            <div v-if="job" class="panel p-4"><div class="flex items-center justify-between text-xs"><span class="font-medium text-violet-300">{{stageLabel(job.stage)}}</span><span class="font-mono text-zinc-500">{{job.progress || 0}}% · {{elapsedJob()}}</span></div><div class="mt-2 h-1.5 overflow-hidden rounded-full bg-zinc-800"><div class="h-full rounded-full bg-violet-500 transition-all" :style="{width:(job.progress||0)+'%'}"></div></div><p v-if="['audio_caption_model','video_model'].includes(job.stage)" class="mt-3 text-[11px] leading-5 text-amber-300/80"><template v-if="job.stage==='video_model' && modelLoaded('video')">Video 모델은 GPU에 로드되어 있습니다. 현재 프레임 설명을 생성 중이며 chunk당 수십 초가 걸릴 수 있습니다.</template><template v-else>첫 실행은 대용량 모델 다운로드와 로드 시간이 포함됩니다. 다운로드 중에는 GPU 사용률이 0%일 수 있으며 이후 요청은 로컬 모델을 재사용합니다.</template></p><p v-if="job.error" class="mt-3 whitespace-pre-wrap text-xs text-rose-300">{{job.error}}</p></div>
+            <div v-if="!result" class="panel flex min-h-[520px] items-center justify-center p-8 text-center"><div><div class="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-zinc-800 bg-zinc-950 text-2xl">Aa</div><p class="mt-4 text-sm text-zinc-400">분석 결과가 이곳에 표시됩니다.</p><p class="mt-1 text-xs text-zinc-600">ASR transcript는 항상 대사의 source of truth로 유지됩니다.</p></div></div>
+            <template v-else>
+                <div class="panel p-5"><div class="flex flex-wrap items-start justify-between gap-3"><div><h2 class="font-semibold">결과</h2><p class="mt-1 text-xs text-zinc-500">{{result.filename}} · {{result.duration?.toFixed(1)}}s · 처리 {{result.processing_seconds}}s <span v-if="result.cache_hit" class="text-emerald-400">· cache</span><span v-if="result.permanent" class="text-amber-300"> · 영구 저장</span></p></div><div class="flex flex-wrap gap-2"><a v-for="fmt in ['json','txt','srt','vtt','context']" :key="fmt" :href="download(fmt)" class="rounded border border-zinc-700 px-2.5 py-1 text-xs uppercase text-zinc-300 hover:bg-zinc-800">{{fmt}}</a><button @click="toggleCurrentPermanent" class="rounded border border-amber-500/30 px-2.5 py-1 text-xs text-amber-300">{{result.permanent?'일반 보관':'영구 저장'}}</button><button @click="deleteCurrent" class="rounded border border-rose-500/30 px-2.5 py-1 text-xs text-rose-300">삭제</button></div></div></div>
+                <div v-if="result.transcription" class="panel overflow-hidden"><div class="border-b border-zinc-800 px-5 py-3"><h3 class="text-sm font-semibold">Transcript <span class="ml-2 text-xs font-normal text-zinc-500">{{result.transcription.backend}} · {{result.transcription.language}}</span></h3><p v-if="result.transcription.chunk_count" class="mt-1 text-[10px] text-zinc-600">{{result.transcription.chunk_count}}개 chunk · {{result.transcription.chunk_size}}초 · overlap {{result.transcription.overlap}}초</p></div><div class="max-h-[520px] overflow-y-auto p-5"><p class="mb-5 whitespace-pre-wrap leading-7 text-zinc-200">{{result.transcription.text}}</p><div class="space-y-2"><button v-for="(segment,index) in result.transcription.segments" :key="index" @click="seekMedia(segment.start)" class="grid w-full gap-2 rounded-lg border border-zinc-800 bg-zinc-950/50 p-3 text-left hover:border-violet-500/40 sm:grid-cols-[110px_1fr]"><span class="font-mono text-[11px] text-violet-400">{{clock(segment.start)}} — {{segment.end==null?'--':clock(segment.end)}}</span><div><p class="text-sm text-zinc-200">{{segment.text}}</p><div v-if="segment.words?.length" class="mt-2 flex flex-wrap gap-1"><span v-for="(word,w) in segment.words" :key="w" class="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-500" :title="clock(word.start)+' - '+clock(word.end)">{{word.word}}</span></div></div></button></div></div></div>
+                <div v-if="result.audio_caption" class="panel overflow-hidden"><div class="border-b border-zinc-800 px-5 py-3"><h3 class="text-sm font-semibold">Audio Context <span class="ml-2 text-xs font-normal text-zinc-500">Qwen3-Omni Captioner · non-speech / ambience</span></h3><p v-if="result.audio_caption.chunk_count" class="mt-1 text-[10px] text-zinc-600">{{result.audio_caption.chunk_count}}개 chunk · {{result.audio_caption.chunk_size}}초 · overlap {{result.audio_caption.overlap}}초</p></div><div class="space-y-2 p-5"><button v-for="(event,index) in result.audio_caption.events" :key="index" @click="seekMedia(event.start)" class="grid w-full gap-2 rounded-lg border border-zinc-800 p-3 text-left hover:border-amber-500/40 sm:grid-cols-[110px_1fr]"><span class="font-mono text-[11px] text-amber-400">{{clock(event.start)}} — {{clock(event.end)}}</span><p class="text-sm leading-6 text-zinc-300">{{event.description}}</p></button></div></div>
+                <div v-if="result.video_analysis" class="panel overflow-hidden"><div class="border-b border-zinc-800 px-5 py-3"><h3 class="text-sm font-semibold">Video Context <span class="ml-2 text-xs font-normal text-zinc-500">Qwen3-Omni Instruct</span></h3><p v-if="result.video_analysis.chunk_count" class="mt-1 text-[10px] text-zinc-600">{{result.video_analysis.chunk_count}}개 chunk · {{result.video_analysis.chunk_size}}초 · overlap {{result.video_analysis.overlap}}초</p></div><div class="space-y-2 p-5"><button v-for="(segment,index) in result.video_analysis.segments" :key="index" @click="seekMedia(segment.start)" class="w-full rounded-lg border border-zinc-800 p-3 text-left hover:border-sky-500/40"><span class="font-mono text-[11px] text-sky-400">{{clock(segment.start)}} — {{clock(segment.end)}}</span><p class="mt-2 text-sm leading-6 text-zinc-300">{{segment.description}}</p></button></div></div>
+                <div class="panel p-5"><div class="flex items-center justify-between"><h3 class="text-sm font-semibold">LLM Context</h3><button @click="copyContext" class="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-400">복사</button></div><pre class="mt-3 max-h-72 overflow-auto whitespace-pre-wrap rounded-lg bg-zinc-950 p-4 font-mono text-xs leading-5 text-zinc-400">{{result.llm_context}}</pre></div>
+            </template>
+        </section>
+    </section>
+</main>
+<script src="/float-panels.js"></script>
+<script>
+const {createApp}=Vue;
+createApp({
+ data(){return{
+  status:{ffmpeg:false,services:{},runtime_models:{}},settings:{gpus:{},ports:{},unload_after_processing:{},qwen3_asr:{},whisper:{},raon:{},captioner:{},video:{}},settingsOpen:false,saving:false,serviceBusy:false,
+  file:null,mediaUrl:'',mediaDuration:0,isVideo:false,busy:false,job:null,jobId:null,result:null,pollTimer:null,history:[],historyRetention:30,historyExpanded:false,
+  roles:[
+   {key:'asr',label:'Speech Transcription',description:'Qwen3-ASR / Whisper / Raon으로 정확한 대사를 생성합니다.'},
+   {key:'caption',label:'Audio Caption',description:'Qwen3-Omni Captioner로 배경음·감정·음향 상황을 설명합니다.'},
+   {key:'video',label:'Video Analysis',description:'Qwen3-Omni Instruct로 영상 프레임을 분석하고 ASR 대사와 합칩니다.'}
+  ],
+  modelToggles:[{key:'qwen',setting:'qwen3_asr',label:'Qwen3-ASR + Aligner'},{key:'whisper',setting:'whisper',label:'Whisper large-v3'},{key:'raon',setting:'raon',label:'Raon-Speech 9B'},{key:'caption',setting:'captioner',label:'Omni Captioner'},{key:'video',setting:'video',label:'Omni Video'}],
+  modes:[
+   {value:'off',label:'OFF',description:'파일 미리보기만 사용하고 AI 분석은 하지 않습니다.'},
+   {value:'asr',label:'Speech Transcription',description:'ASR만 실행해 정확한 대사와 자막을 만듭니다.'},
+   {value:'caption',label:'Audio Caption',description:'Omni Captioner만 실행해 비언어적 소리와 상황을 설명합니다.'},
+   {value:'detailed',label:'Combined Audio',description:'ASR 대사 + Omni 오디오 설명을 병렬 실행해 합칩니다.'},
+   {value:'full',label:'Full Audio + Video',description:'빠른 기본값은 ASR + Video Omni입니다. 별도 Captioner는 선택 사항입니다.'}
+  ],
+  form:{mode:'asr',asr_model:'qwen3-asr',caption_model:'qwen3-omni-captioner',video_model:'qwen3-omni-video',full_audio_caption:false,language:'ko',task:'transcribe',timestamps:true,word_timestamps:true,vad:true,beam_size:5,chunk_size:30,overlap:2,condition_on_previous_text:true,initial_prompt:''}
+ }},
+ computed:{
+  usesAsr(){return['asr','detailed','full'].includes(this.form.mode)},
+  usesCaption(){return['caption','detailed'].includes(this.form.mode)||(this.form.mode==='full'&&this.form.full_audio_caption)},
+  usesVideo(){return this.form.mode==='full'},
+  visibleHistory(){return this.historyExpanded?this.history:this.history.slice(0,6)},
+  estimatedChunks(){if(!this.mediaDuration)return 0;const step=Math.max(1,this.form.chunk_size-this.form.overlap),tolerance=Math.min(10,this.form.chunk_size/3);let count=0,start=0;while(start<this.mediaDuration){count++;if(this.mediaDuration-start<=this.form.chunk_size+tolerance)break;start+=step}return count}
+ },
+ async mounted(){await Promise.all([this.refresh(),this.loadHistory()])},beforeUnmount(){clearTimeout(this.pollTimer);this.releaseMedia()},
+ methods:{
+  async api(url,options={}){const response=await fetch(url,options);if(!response.ok){let body;try{body=await response.json()}catch{body={detail:await response.text()}}throw new Error(body.detail||`HTTP ${response.status}`)}return response.json()},
+  async refresh(){try{this.status=await this.api('/api/media-analysis/status');this.settings=JSON.parse(JSON.stringify(this.status.settings));this.historyRetention=this.settings.result_retention_days||30}catch(e){console.error(e)}},
+  service(role){return this.status.services?.[role]||{}},
+  gpuPick(role){const raw=String(this.settings.gpus?.[role]||'');if(raw.trim())return raw.split(',').map(item=>item.trim()).filter(Boolean);return (this.service(role).running_gpus||[]).map(String)},
+  toggleGpu(role,index){const pick=this.gpuPick(role),next=pick.includes(index)?pick.filter(item=>item!==index):[...pick,index].sort((a,b)=>Number(a)-Number(b));this.$set?this.$set(this.settings.gpus,role,next.join(',')):this.settings.gpus[role]=next.join(',')},
+  gpuChangePending(role){return this.service(role).running&&this.gpuPick(role).length&&this.gpuPick(role).join(',')!==(this.service(role).running_gpus||[]).join(',')},
+  placementLabel(role){const running=(this.service(role).running_gpus||[]).map(String);if(this.service(role).running)return running.length?`GPU ${running.join(' + ')} 배치됨`:'GPU 자동(전체 표시)';const pick=this.gpuPick(role);return pick.length?`GPU ${pick.join(' + ')} 선택 · 대기 중`:'GPU 미지정'},
+  roleEnabled(role){if(role==='asr')return!!(this.settings.qwen3_asr?.enabled||this.settings.whisper?.enabled||this.settings.raon?.enabled);if(role==='caption')return!!this.settings.captioner?.enabled;return!!this.settings.video?.enabled},
+  modelRuntimeLabel(role){const models=Object.values(this.status.runtime_models?.[role]||{}),loaded=models.filter(item=>item.loaded).length;if(loaded)return`${loaded}개 모델 GPU 로드됨`;return this.service(role).ready?'서비스 준비됨 · 분석 시 모델 lazy load':'서비스 중지됨 · 요청 시 자동 시작'},
+  modelLoaded(role){return Object.values(this.status.runtime_models?.[role]||{}).some(item=>item.loaded)},
+  elapsedJob(){if(!this.job?.created_at)return'0초';const terminal=['completed','failed','cancelled'].includes(this.job.status),end=terminal?(this.job.updated_at||Date.now()/1000):Date.now()/1000,seconds=Math.max(0,Math.round(end-this.job.created_at));return seconds<60?`${seconds}초`:`${Math.floor(seconds/60)}분 ${seconds%60}초`},
+  modeAvailable(mode){if(mode==='off')return true;if(mode==='asr')return this.roleEnabled('asr');if(mode==='caption')return this.roleEnabled('caption');if(mode==='detailed')return this.roleEnabled('asr')&&this.roleEnabled('caption');if(mode==='full')return this.roleEnabled('asr')&&this.roleEnabled('video')&&(!this.form.full_audio_caption||this.roleEnabled('caption'));return false},
+  useRole(role){this.form.mode=role==='asr'?'asr':role==='caption'?'caption':'full';document.querySelector('[class*="lg:grid-cols-[380px"]')?.scrollIntoView({behavior:'smooth'})},
+  defaultModel(role){return role==='asr'?this.form.asr_model:role==='caption'?this.form.caption_model:this.form.video_model},
+  async control(role,action){this.serviceBusy=true;try{const options={method:'POST'};if(['load','start'].includes(action)){options.headers={'Content-Type':'application/json'};const body={gpus:this.gpuPick(role)};if(action==='load')body.model=this.defaultModel(role);options.body=JSON.stringify(body)}await this.api(`/api/media-analysis/services/${role}/${action}`,options);await this.refresh();if(['start','load'].includes(action))this.useRole(role)}catch(e){alert(e.message)}finally{this.serviceBusy=false}},
+  async saveSettings(){this.saving=true;try{const data=await this.api('/api/media-analysis/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(this.settings)});this.settings=data.settings;await this.refresh();alert('설정을 저장했습니다. 모델 설정 변경 시 해당 서비스를 재시작해 주세요.')}catch(e){alert(e.message)}finally{this.saving=false}},
+  releaseMedia(){if(this.mediaUrl)URL.revokeObjectURL(this.mediaUrl);this.mediaUrl=''},
+  setFile(file){this.releaseMedia();this.file=file||null;this.result=null;this.job=null;this.jobId=null;this.mediaDuration=0;if(!file)return;this.mediaUrl=URL.createObjectURL(file);this.isVideo=(file.type||'').startsWith('video/')||/\.(mp4|mkv|mov|webm|avi|wmv|m4v)$/i.test(file.name)},
+  pickFile(event){this.setFile(event.target.files?.[0])},dropFile(event){this.setFile(event.dataTransfer.files?.[0])},
+  mediaLoaded(event){this.mediaDuration=Number(event.target.duration||0)},
+  async start(){if(!this.file)return;if(this.form.mode==='full'&&!this.isVideo){alert('Full Audio + Video 모드는 비디오 파일이 필요합니다.');return}this.busy=true;this.result=null;const form=new FormData();form.append('file',this.file);Object.entries(this.form).forEach(([key,value])=>form.append(key,String(value)));try{const data=await this.api('/api/media/analyze',{method:'POST',body:form});this.jobId=data.job_id;this.job=data;this.poll()}catch(e){this.busy=false;alert(e.message)}},
+  async poll(){try{const data=await this.api(`/api/media/jobs/${this.jobId}`);this.job=data;if(data.status==='completed'){this.result=data.result;this.busy=false;await this.loadHistory();return}if(['failed','cancelled'].includes(data.status)){this.busy=false;return}this.pollTimer=setTimeout(()=>this.poll(),1000)}catch(e){this.busy=false;this.job={...(this.job||{}),error:e.message}}},
+  async cancel(){if(!this.jobId)return;try{await this.api(`/api/media/jobs/${this.jobId}/cancel`,{method:'POST'})}catch(e){alert(e.message)}},
+  download(format){return `/api/media/jobs/${this.jobId}/download/${format}`},
+  async copyContext(){await navigator.clipboard.writeText(this.result?.llm_context||'')},
+  async loadHistory(){try{const data=await this.api('/api/media-analysis/history');this.history=data.items||[];this.historyRetention=data.retention_days||30}catch(e){console.error(e)}},
+  async openHistory(item){this.releaseMedia();this.file=null;this.mediaDuration=0;this.jobId=item.job_id;const data=await this.api(`/api/media/jobs/${item.job_id}`);this.job=data;this.result=data.result;window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'})},
+  async togglePermanent(item){await this.api(`/api/media/jobs/${item.job_id}/permanent`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({permanent:!item.permanent})});await this.loadHistory();if(this.jobId===item.job_id&&this.result)this.result.permanent=!item.permanent},
+  async toggleCurrentPermanent(){if(!this.jobId||!this.result)return;const permanent=!this.result.permanent;await this.api(`/api/media/jobs/${this.jobId}/permanent`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({permanent})});this.result.permanent=permanent;await this.loadHistory()},
+  async deleteHistory(item){if(!confirm(`'${item.filename}' 분석 결과를 삭제할까요?`))return;await this.api(`/api/media/jobs/${item.job_id}`,{method:'DELETE'});if(this.jobId===item.job_id){this.jobId=null;this.job=null;this.result=null}await this.loadHistory()},
+  async deleteCurrent(){if(!this.jobId||!this.result)return;const item={job_id:this.jobId,filename:this.result.filename};await this.deleteHistory(item)},
+  seekMedia(seconds){const player=this.$refs.mediaPlayer;if(!player)return;player.currentTime=Number(seconds||0);player.play().catch(()=>{})},
+  formatBytes(value){if(!value)return'0 B';const units=['B','KB','MB','GB'];const index=Math.min(Math.floor(Math.log(value)/Math.log(1024)),3);return`${(value/1024**index).toFixed(index?1:0)} ${units[index]}`},
+  clock(value){value=Number(value||0);const h=Math.floor(value/3600),m=Math.floor((value-h*3600)/60),s=value-h*3600-m*60;return`${h?String(h).padStart(2,'0')+':':''}${String(m).padStart(2,'0')}:${s.toFixed(1).padStart(4,'0')}`},
+  dateTime(value){return new Date(Number(value||0)*1000).toLocaleString('ko-KR',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})},
+  modeLabel(mode){return({asr:'Speech',caption:'Audio Caption',detailed:'Combined',full:'Full A/V'}[mode]||mode)},
+  stageLabel(stage){return({queued:'대기 중',audio_extraction:'오디오 추출 중',transcription:'음성 인식 중',analysis:'ASR + 오디오 분석 중',audio_caption_model:'Audio Caption 모델 다운로드·로드·첫 분석 중',audio_caption:'오디오 캡션 다음 chunk 생성 중',video_model:'Video 모델 다운로드·로드·첫 분석 중',video_analysis:'영상 다음 chunk 분석 중',completed:'완료',cancelling:'취소 중',cancelled:'취소됨',failed:'실패'}[stage]||stage||'처리 중')}
+ }
+}).mount('#app');
+</script>
+</body>
+</html>

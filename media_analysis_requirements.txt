@@ -1,0 +1,14 @@
+# Isolated inference environment. Heavy dependencies do not enter main_server's venv.
+fastapi>=0.115,<1
+uvicorn[standard]>=0.34,<1
+pydantic>=2.10,<3
+qwen-asr==0.0.6
+faster-whisper==1.2.1
+qwen-omni-utils==0.0.9
+transformers>=4.57.1,<5
+torchvision>=0.29,<0.30
+accelerate>=1.2
+soundfile>=0.12
+audioread>=3.0
+nvidia-cublas-cu12
+nvidia-cudnn-cu12==9.*

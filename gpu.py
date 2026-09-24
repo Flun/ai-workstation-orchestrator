@@ -17,6 +17,9 @@ GPU_SERVICE_LABELS = {
     "watcher": {"label": "와처", "color": "violet"},
     "vllm": {"label": "vLLM", "color": "rose"},
     "unsloth": {"label": "Unsloth", "color": "lime"},
+    "media_analysis_asr": {"label": "Media ASR", "color": "violet"},
+    "media_analysis_caption": {"label": "Audio Caption", "color": "fuchsia"},
+    "media_analysis_video": {"label": "Video Analysis", "color": "cyan"},
     "system": {"label": "OS / 디스플레이 / 드라이버", "color": "zinc"},
 }
 
@@ -336,6 +339,9 @@ def _classify_process(pid, process_name=""):
                 return "vllm"
             if "unsloth" in command and "studio" in command:
                 return "unsloth"
+            if "media_analysis_service.py" in command:
+                role = re.search(r"--role\s+(asr|caption|video)\b", command)
+                return f"media_analysis_{role.group(1)}" if role else "other"
             parent = proc.parent()
             if parent is None:
                 break
