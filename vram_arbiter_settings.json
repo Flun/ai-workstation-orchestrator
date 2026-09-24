@@ -35,6 +35,13 @@
       "enabled": false,
       "safety_margin_mb": 2048,
       "evict_threshold_percent": 0
+    },
+    "GPU-7ab41b9f-0233-e333-e3aa-cde1a3c634dd": {
+      "index": 0,
+      "name": "NVIDIA CMP 170HX",
+      "enabled": false,
+      "safety_margin_mb": 2048,
+      "evict_threshold_percent": 0
     }
   },
   "default_evict_threshold_percent": 0,
@@ -47,7 +54,7 @@
   "learned_peak_mb": {
     "llama-8080": 55287,
     "llama-8081": 58436,
-    "comfy-main": 31123,
+    "comfy-main": 42261,
     "llama-44099": 29794,
     "llama-43147": 22358,
     "llama-57035": 32046,
@@ -64,7 +71,7 @@
     "llama-44453": 22782,
     "llama-18080": 78182,
     "llama-18099": 552,
-    "comfy-gpu1": 18201,
+    "comfy-gpu1": 35245,
     "llama-56075": 33954,
     "llama-52755": 33954,
     "llama-42341": 33966,
