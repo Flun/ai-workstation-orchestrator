@@ -25,8 +25,8 @@ fi
 .venv/bin/pip -q install -U pip
 # llm-inference-bench 런타임(README 명시) + hw 샘플러용 psutil
 .venv/bin/pip -q install httpx rich psutil
-# lm-eval 코어 + OpenAI 호환 API 백엔드(api) + 로컬 HF 토크나이저(transformers)
-.venv/bin/pip -q install -e "./lm-evaluation-harness[api]" transformers
+# lm-eval 코어 + OpenAI 호환 API 백엔드(api) + ifeval 채점기 + 로컬 HF 토크나이저(transformers)
+.venv/bin/pip -q install -e "./lm-evaluation-harness[api,ifeval]" transformers
 
 mkdir -p runs
 echo
