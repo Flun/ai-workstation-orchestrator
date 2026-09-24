@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>External Bench · AI Infrastructure Console</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<style>
+  [v-cloak] { display:none; }
+  body { background:#09090b; color:#e4e4e7; font-family:Inter,ui-sans-serif,system-ui,sans-serif; }
+  .panel { background:rgba(24,24,27,.82); border:1px solid #27272a; border-radius:16px; }
+  .input { width:100%; border:1px solid #3f3f46; border-radius:10px; background:#09090b; color:#f4f4f5; padding:.55rem .7rem; outline:none; }
+  .input:focus { border-color:#14b8a6; box-shadow:0 0 0 3px rgba(20,184,166,.12); }
+  .button { border-radius:10px; padding:.55rem .9rem; font-size:.8rem; font-weight:650; transition:.15s; }
+  .button:disabled { cursor:not-allowed; opacity:.4; }
+  .primary { background:#0f766e; color:white; }
+  .primary:hover:not(:disabled) { background:#0d9488; }
+  .muted { background:#27272a; color:#d4d4d8; border:1px solid #3f3f46; }
+  .muted:hover:not(:disabled) { background:#3f3f46; }
+  .danger { background:rgba(159,18,57,.28); border:1px solid rgba(244,63,94,.35); color:#fda4af; }
+  .title-input { background:transparent; border:1px dashed transparent; border-radius:8px; padding:.15rem .4rem; margin:-.15rem -.4rem; color:#fafafa; font-weight:650; font-size:1.05rem; outline:none; width:100%; }
+  .title-input:hover { border-color:#3f3f46; }
+  .title-input:focus { border:1px solid #14b8a6; background:#09090b; }
+  .chip { border-radius:999px; padding:.15rem .55rem; font-size:.68rem; font-weight:600; }
+  .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .svc-chip { border:1px solid #3f3f46; border-radius:12px; padding:.45rem .7rem; font-size:.78rem; cursor:pointer; transition:.15s; background:#18181b; }
+  .svc-chip:hover { border-color:#14b8a6; }
+  .svc-chip.active { border-color:#14b8a6; background:rgba(20,184,166,.12); color:#5eead4; }
+  .suite-chip { border:1px solid #3f3f46; border-radius:12px; padding:.5rem .8rem; font-size:.78rem; cursor:pointer; transition:.15s; background:#18181b; text-align:left; }
+  .suite-chip.active { border-color:#14b8a6; background:rgba(20,184,166,.12); }
+  th { text-align:right; font-weight:600; color:#71717a; font-size:.66rem; text-transform:uppercase; letter-spacing:.05em; padding:.35rem .5rem; border-bottom:1px solid #27272a; white-space:nowrap; }
+  td { text-align:right; padding:.4rem .5rem; font-size:.78rem; border-bottom:1px solid rgba(39,39,42,.6); white-space:nowrap; }
+  th:first-child, td:first-child { text-align:left; }
+  ::-webkit-scrollbar { width:8px; height:8px; }
+  ::-webkit-scrollbar-thumb { background:#3f3f46; border-radius:10px; }
+  .spin { animation:spin 1s linear infinite; } @keyframes spin { to { transform:rotate(360deg); } }
+  details > summary { cursor:pointer; }
+</style>
+</head>
+<body>
+<div id="app" v-cloak class="mx-auto min-h-screen max-w-[1600px] px-4 py-5 md:px-7">
+  <header class="mb-6 flex flex-wrap items-center justify-between gap-4">
+    <div>
+      <div class="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[.2em] text-teal-400">
+        <span class="h-2 w-2 rounded-full bg-teal-400"></span> AI Infrastructure Console
+      </div>
+      <h1 class="text-2xl font-semibold tracking-tight text-zinc-50">External Bench</h1>
+      <p class="mt-1 text-sm text-zinc-500">lm-evaluation-harness(정확도) · llm-inference-bench(동시성×컨텍스트 처리량) — 로컬 vLLM/llama.cpp 서버 대상, 기존 LLM Benchmark와 분리된 외부 도구 페이지</p>
+    </div>
+    <div class="flex flex-wrap items-center gap-2">
+      <button class="button muted" @click="refresh(); refreshServices()"> 새로고침</button>
+      <button class="button primary" :disabled="!tools.lib_ready && !tools.lmeval_ready" @click="addCard('lib')">+ 벤치 카드 추가</button>
+      <a href="/llm-bench" class="button muted no-underline">LLM Benchmark</a>
+      <a href="/" class="button muted no-underline">← 대시보드</a>
+    </div>
+  </header>
+
+  <!-- 도구 상태 -->
+  <section v-if="!tools.lib_ready || !tools.lmeval_ready" class="panel mb-5 px-5 py-3.5">
+    <div class="mb-1 text-xs font-semibold text-amber-300">외부 벤치 도구가 아직 설치되지 않았습니다</div>
+    <p class="text-xs leading-relaxed text-zinc-400">메인서버 셸에서 아래 명령을 한 번 실행하면 이 페이지가 자동 인식합니다
+      (GitHub 클론 + 전용 venv — 메인서버 파이썬과 격리).</p>
+    <div class="mono mt-2 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-[11px] text-teal-300">
+      bash {{ tools.setup_script }}
+      <button class="ml-2 text-zinc-500 hover:text-teal-300" @click="copySetup">복사</button>
+      <span v-if="copied" class="ml-1 text-teal-400">복사됨</span>
+    </div>
+    <div class="mt-1.5 flex gap-3 text-[11px] text-zinc-500">
+      <span>llm-inference-bench: {{ tools.lib_ready ? 'OK' : '없음' }}</span>
+      <span>lm-evaluation-harness: {{ tools.lmeval_ready ? 'OK' : '없음' }}</span>
+    </div>
+  </section>
+
+  <!-- 메인서버 서비스 -->
+  <section class="panel mb-5 px-5 py-3.5">
+    <div class="flex flex-wrap items-center gap-2.5">
+      <span class="text-xs font-semibold text-zinc-400">메인서버 실행 중인 LLM 서비스 (이 목록 안에서만 벤치 가능)</span>
+      <span v-if="!services.length" class="text-xs text-zinc-600">없음 — vLLM/llama.cpp를 먼저 켜세요</span>
+      <span v-if="svcError" class="text-xs text-rose-400">{{ svcError }}</span>
+      <span class="ml-auto text-[11px] text-zinc-600">카드에서 서버를 선택하면 모델/컨텍스트가 자동 채워집니다</span>
+    </div>
+  </section>
+
+  <div v-if="error" class="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300" @click="error=''">{{ error }}</div>
+
+  <div v-if="!cards.length" class="panel flex flex-col items-center gap-3 px-6 py-16 text-center">
+    <p class="text-sm text-zinc-500">카드를 추가해 벤치 대상 서버와 벤치 종료를 고르세요. 실행 결과는 카드에 누적 기록됩니다.</p>
+    <div class="flex gap-2">
+      <button class="button primary" :disabled="!tools.lib_ready" @click="addCard('lib')">+ llm-inference-bench 카드</button>
+      <button class="button primary" :disabled="!tools.lmeval_ready" @click="addCard('lme')">+ lm-eval-harness 카드</button>
+    </div>
+  </div>
+
+  <div class="grid items-start gap-5 2xl:grid-cols-2">
+    <section v-for="card in cards" :key="card.id" class="panel min-w-0 overflow-hidden">
+      <div class="flex items-start gap-3 border-b border-zinc-800 px-5 py-4">
+        <div class="min-w-0 flex-1">
+          <input class="title-input" v-model="card.title" maxlength="80"
+                 @change="patchCard(card, {title: card.title})" @keyup.enter="$event.target.blur()">
+          <div class="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-zinc-500">
+            <span class="chip bg-zinc-800 text-zinc-400">추가 {{ fmtTs(card.created_at) }}</span>
+            <span class="chip" :class="card.suite==='lib' ? 'bg-sky-500/15 text-sky-300' : 'bg-fuchsia-500/15 text-fuchsia-300'">{{ suiteLabel(card.suite) }}</span>
+            <span v-if="card.engine" class="chip bg-indigo-500/15 text-indigo-300">{{ card.engine }}</span>
+            <span v-if="card.max_context" class="chip bg-sky-500/15 text-sky-300">max ctx {{ fmtN(card.max_context) }}</span>
+            <span v-if="card.source_label" class="chip bg-emerald-500/15 text-emerald-300">{{ card.source_label }}</span>
+          </div>
+        </div>
+        <button class="button danger !px-2.5 !py-1.5 shrink-0" @click="removeCard(card)" title="카드와 결과 삭제">✕</button>
+      </div>
+
+      <div class="space-y-3 px-5 py-4">
+        <!-- 대상 서버 -->
+        <div>
+          <label class="mb-1.5 block text-[11px] font-semibold text-zinc-500">벤치 대상 (메인서버 서비스)</label>
+          <div class="flex flex-wrap gap-1.5">
+            <button v-for="svc in services" :key="svc.key" class="svc-chip !py-1.5 !px-2.5 !text-[11px]"
+                    :class="{active: card.service_key===svc.key}" @click="pickService(card, svc)">
+              {{ svc.label }} <span class="mono opacity-60">{{ svc.base_url }}</span>
+            </button>
+            <span v-if="!services.length" class="text-[11px] text-zinc-600">실행 중인 서비스 없음</span>
+          </div>
+        </div>
+
+        <!-- 벤치 도구 선택 -->
+        <div class="grid gap-2 sm:grid-cols-2">
+          <button class="suite-chip" :class="{active: card.suite==='lib'}" :disabled="!tools.lib_ready"
+                  @click="patchCard(card,{suite:'lib'})">
+            <div class="font-semibold text-zinc-100">llm-inference-bench</div>
+            <div class="text-[11px] text-zinc-500">동시성 × 컨텍스트 디코드 행렬 + 프리필 스카우트 · vLLM 전용</div>
+          </button>
+          <button class="suite-chip" :class="{active: card.suite==='lme'}" :disabled="!tools.lmeval_ready"
+                  @click="patchCard(card,{suite:'lme'})">
+            <div class="font-semibold text-zinc-100">lm-evaluation-harness</div>
+            <div class="text-[11px] text-zinc-500">태스크 정확도 평가 (arc/gsm8k/mmlu…) · vLLM/llama.cpp</div>
+          </button>
+        </div>
+
+        <!-- 모델 -->
+        <div class="flex items-center gap-2">
+          <label class="shrink-0 text-[11px] font-semibold text-zinc-500">모델</label>
+          <select v-if="modelsOf(card).length>1" class="input !w-auto !py-1.5 !text-xs" v-model="card.model" @change="patchCard(card,{model:card.model})">
+            <option v-for="m in modelsOf(card)" :key="m" :value="m">{{ m }}</option>
+          </select>
+          <span v-else class="mono truncate text-xs" :class="card.model?'text-zinc-200':'text-zinc-600'">{{ card.model || '— 서버를 선택하세요' }}</span>
+          <button class="ml-auto text-[11px] text-zinc-500 hover:text-zinc-300" @click="reprobe(card)">재조회</button>
+        </div>
+
+        <!-- vLLM lm-eval: 토크나이저 -->
+        <div v-if="card.suite==='lme' && isVllm(card)">
+          <label class="mb-1 block text-[11px] font-semibold text-zinc-500">토크나이저 디렉터리 (서버가 올린 모델 경로 — lm-eval이 로그로그리들리 계산에 사용)</label>
+          <input v-model="card.tokenizer" @change="patchCard(card,{tokenizer:card.tokenizer})"
+                 class="input mono !text-xs" placeholder="/mnt/main-server-models/model/… (docker -v 소스 경로)">
+          <label class="mt-1.5 flex cursor-pointer items-center gap-2 text-[11px] text-zinc-400">
+            <input type="checkbox" v-model="card.use_chat_template" @change="patchCard(card,{use_chat_template:card.use_chat_template})" class="accent-teal-500">
+            chat template 사용 (instructions-tuned 모델 권장 — chat/completions로 요청)
+          </label>
+        </div>
+
+        <!-- llm-inference-bench 설정 -->
+        <div v-if="card.suite==='lib'" class="rounded-xl border border-sky-500/20 bg-sky-500/5 px-4 py-3">
+          <div class="mb-2 flex flex-wrap gap-2">
+            <button class="button muted !py-1 !text-[11px]" :disabled="running" @click="run(card,'lib_quick')">빠른 (C 1,2 · 0k · 15s)</button>
+            <button class="button muted !py-1 !text-[11px]" :disabled="running" @click="run(card,'lib_standard')">표준 (C 1–8 · 0/16k · 30s)</button>
+            <button class="button muted !py-1 !text-[11px]" :disabled="running" @click="run(card,'lib_full')">전체 (C 1–16 · 0/16/64k)</button>
+          </div>
+          <div class="grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
+            <label class="block text-zinc-500">동시성
+              <input class="input mono !mt-0.5 !py-1 !text-[11px]" v-model="card.lib.concurrency" @change="patchCard(card,{lib:card.lib})"></label>
+            <label class="block text-zinc-500">컨텍스트
+              <input class="input mono !mt-0.5 !py-1 !text-[11px]" v-model="card.lib.contexts" @change="patchCard(card,{lib:card.lib})"></label>
+            <label class="block text-zinc-500">셀당 시간(s)
+              <input type="number" class="input mono !mt-0.5 !py-1 !text-[11px]" v-model.number="card.lib.duration" min="5" @change="patchCard(card,{lib:card.lib})"></label>
+            <label class="block text-zinc-500">max_tokens
+              <input type="number" class="input mono !mt-0.5 !py-1 !text-[11px]" v-model.number="card.lib.max_tokens" @change="patchCard(card,{lib:card.lib})"></label>
+          </div>
+          <button class="button primary mt-2 !py-1.5 !text-[11px]" :disabled="running || !card.service_key" @click="run(card,'lib_custom')">위 값으로 커스텀 실행</button>
+          <p class="mt-1.5 text-[10px] leading-relaxed text-zinc-600">동시성/컨텍스트는 쉼표 구분. 각 셀 종료 시 서버 총합 디코드 tok/s, 사용자별 속성, TTFT/ITL이 기록됩니다.</p>
+        </div>
+
+        <!-- lm-eval 설정 -->
+        <div v-if="card.suite==='lme'" class="rounded-xl border border-fuchsia-500/20 bg-fuchsia-500/5 px-4 py-3">
+          <div class="mb-2 flex flex-wrap gap-2">
+            <button class="button muted !py-1 !text-[11px]" :disabled="running" @click="run(card,'lme_quick')">스모크 (3태스크×200)</button>
+            <button class="button muted !py-1 !text-[11px]" :disabled="running" @click="run(card,'lme_standard')">표준 5태스크 (전체)</button>
+          </div>
+          <label class="block text-[11px] text-zinc-500">태스크 (쉼표 구분)
+            <input class="input mono !mt-0.5 !py-1 !text-xs" v-model="card.lme.tasks" list="lme-tasks" @change="patchCard(card,{lme:card.lme})"
+                   placeholder="arc_easy,gsm8k,mmlu…">
+          </label>
+          <div class="mt-1.5 flex flex-wrap gap-1">
+            <button v-for="g in popularTasks" :key="g" class="chip border border-zinc-700 bg-zinc-900 text-zinc-400 hover:border-fuchsia-500/60"
+                    @click="addTask(card,g)">+ {{ g }}</button>
+          </div>
+          <div class="mt-2 grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-3">
+            <label class="block text-zinc-500">limit (태스크당, 비우면 전체)
+              <input type="number" min="1" class="input mono !mt-0.5 !py-1 !text-[11px]" v-model="card.lme.limit" @change="patchCard(card,{lme:card.lme})"></label>
+            <label class="block text-zinc-500">few-shot (비우면 태스크 기본)
+              <input type="number" min="0" class="input mono !mt-0.5 !py-1 !text-[11px]" v-model="card.lme.num_fewshot" @change="patchCard(card,{lme:card.lme})"></label>
+            <label class="block text-zinc-500">동시 요청
+              <input type="number" min="1" max="64" class="input mono !mt-0.5 !py-1 !text-[11px]" v-model.number="card.lme.num_concurrent" @change="patchCard(card,{lme:card.lme})"></label>
+          </div>
+          <button class="button primary mt-2 !py-1.5 !text-[11px]" :disabled="running || !card.service_key" @click="run(card,'lme_custom')">위 값으로 커스텀 실행</button>
+          <p class="mt-1.5 text-[10px] leading-relaxed text-zinc-600">vLLM은 /tokenizer_info가 없어 토크나이저 경로가 필요합니다 · llama.cpp는 gguf 백엔드(슬롯 병렬 자동 감지, chat template 미지원)로 실행됩니다.</p>
+        </div>
+        <datalist id="lme-tasks"><option v-for="t in taskNames" :key="t" :value="t"></option></datalist>
+
+        <!-- 실행 중 -->
+        <div v-if="jobFor(card.id)" class="rounded-xl border border-teal-500/30 bg-teal-500/10 px-4 py-3">
+          <div class="flex items-center gap-2 text-sm text-teal-300">
+            <svg class="spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path></svg>
+            <span class="font-semibold">{{ presetLabel(jobFor(card.id).preset) }} 실행 중</span>
+            <span class="text-xs opacity-70">{{ elapsed(jobFor(card.id)) }}</span>
+            <button class="ml-auto button danger !py-1 !px-2.5 !text-[11px]" @click="cancelJob(jobFor(card.id))">취소</button>
+          </div>
+          <div class="mono mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-zinc-950/70 p-2 text-[10px] leading-snug text-teal-200/80">{{ logTail(jobFor(card.id)) }}</div>
+        </div>
+      </div>
+
+      <!-- 결과 -->
+      <div class="border-t border-zinc-800 bg-zinc-950/40 px-5 py-4">
+        <div class="mb-2 flex items-center justify-between">
+          <h3 class="text-xs font-semibold uppercase tracking-wider text-zinc-500">실행 기록</h3>
+          <span class="text-[11px] text-zinc-600">{{ resultsFor(card.id).length }}건</span>
+        </div>
+        <div v-if="!resultsFor(card.id).length" class="py-6 text-center text-xs text-zinc-600">아직 기록이 없습니다.</div>
+        <div class="space-y-3">
+          <article v-for="r in resultsFor(card.id)" :key="r.id" class="rounded-xl border border-zinc-800 bg-zinc-900/70 px-4 py-3">
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-zinc-400">
+              <span class="chip" :class="r.suite==='lib' ? 'bg-sky-500/15 text-sky-300' : 'bg-fuchsia-500/15 text-fuchsia-300'">{{ presetLabel(r.preset) }}</span>
+              <span v-if="r.error" class="chip bg-rose-500/15 text-rose-300">오류</span>
+              <span class="font-semibold text-zinc-300">{{ fmtTs(r.started_at) }}</span>
+              <span>서빙: <span class="text-zinc-300">{{ r.meta.serving }}</span></span>
+              <span>모델: <span class="mono text-zinc-300">{{ r.meta.model }}</span></span>
+              <span>소요 {{ fmtDur(r.duration_s) }}</span>
+              <button v-if="r.log_file" class="text-zinc-500 hover:text-teal-300" @click="openLog(r)" title="실행 로그">로그</button>
+              <button class="ml-auto text-zinc-600 hover:text-rose-400" @click="removeResult(r)" title="결과 삭제">✕</button>
+            </div>
+
+            <!-- lib: 디코드 행렬 -->
+            <template v-if="r.suite==='lib'">
+              <div v-if="r.summary && (r.summary.best_total_tps||r.summary.best_single_tps)" class="mt-2 flex flex-wrap gap-2 text-[11px]">
+                <span class="chip bg-zinc-800 text-zinc-300">최고 총합 <b class="text-cyan-200">{{ fmtN(r.summary.best_total_tps) }}</b> tok/s</span>
+                <span class="chip bg-zinc-800 text-zinc-300">사용자별 최고 <b class="text-emerald-300">{{ fmtN(Math.round(r.summary.best_single_tps)) }}</b> tok/s</span>
+                <span class="chip bg-zinc-800 text-zinc-400">C={{ (r.meta.concurrency||[]).join(',') }} · ctx={{ (r.meta.contexts||[]).map(c=>fmtTok(c)).join(',') }}</span>
+              </div>
+              <div v-if="r.cells && r.cells.length" class="mt-2 overflow-x-auto">
+                <table class="w-full">
+                  <thead><tr><th>컨텍스트</th><th>동시</th><th>총합 tok/s</th><th>사용자별</th><th>TTFT</th><th>ITL</th></tr></thead>
+                  <tbody>
+                    <tr v-for="(c,i) in r.cells" :key="i" :class="c.failed?'text-rose-400/70':''">
+                      <td>{{ fmtTok(c.context_tokens) }}</td>
+                      <td>{{ c.concurrency }}</td>
+                      <td class="font-bold text-cyan-200">{{ c.failed ? '실패' : fmtN(c.aggregate_tps) }}</td>
+                      <td class="text-emerald-300">{{ c.failed||!c.aggregate_tps ? '—' : fmtN(round(c.aggregate_tps/Math.max(c.concurrency,1))) }}</td>
+                      <td>{{ c.ttft_avg_s ? c.ttft_avg_s+'s' : '—' }}</td>
+                      <td>{{ c.itl_avg_ms ? c.itl_avg_ms+'ms' : '—' }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div v-if="r.prefill && Object.keys(r.prefill).length" class="mt-2 flex flex-wrap gap-1.5 text-[11px]">
+                <span class="text-[10px] uppercase tracking-wider text-zinc-500">프리필</span>
+                <span v-for="(p,ctx) in r.prefill" :key="ctx" class="chip bg-zinc-800 text-amber-300">{{ fmtTok(+ctx) }} → {{ fmtN(Math.round(p.tok_per_sec)) }} tok/s</span>
+              </div>
+            </template>
+
+            <!-- lme: 태스크 점수 -->
+            <template v-if="r.suite==='lme'">
+              <div v-if="r.meta && r.meta.limit" class="mt-1 text-[10px] text-zinc-500">limit {{ r.meta.limit }} · few-shot {{ r.meta.num_fewshot==null ? '태스크 기본' : r.meta.num_fewshot }}</div>
+              <div v-if="r.tasks && r.tasks.length" class="mt-2 overflow-x-auto">
+                <table class="w-full">
+                  <thead><tr><th>태스크</th><th>n</th><th v-for="m in metricColumns(r)" :key="m">{{ m }}</th></tr></thead>
+                  <tbody>
+                    <tr v-for="t in r.tasks" :key="t.task">
+                      <td>{{ t.alias }}<span v-if="t.samples" class="ml-1 text-[10px] text-zinc-600">({{ t.samples }})</span></td>
+                      <td class="text-zinc-500">{{ fmtN(t.samples) }}</td>
+                      <td v-for="m in metricColumns(r)" :key="m" class="font-semibold text-emerald-300">
+                        <template v-for="mm in t.metrics.filter(x=>x.metric===m)">
+                          {{ pct(mm.value) }}<span v-if="mm.stderr!=null" class="text-[10px] font-normal text-zinc-500"> ±{{ pct(mm.stderr) }}</span>
+                        </template>
+                        <template v-if="!t.metrics.some(x=>x.metric===m)">—</template>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </template>
+
+            <div v-if="r.error" class="mono mt-1 whitespace-pre-wrap text-[10px] text-rose-300/80">{{ r.error }}</div>
+            <div class="mono mt-1.5 truncate text-[10px] text-zinc-600" :title="r.command">{{ r.command }}</div>
+          </article>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- 로그 모달 -->
+  <div v-if="logContent" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6" @click.self="logContent=''">
+    <div class="panel max-h-[80vh] w-full max-w-4xl overflow-hidden">
+      <div class="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
+        <span class="mono text-xs text-zinc-400">{{ logPath }}</span>
+        <button class="button muted !py-1 !text-[11px]" @click="logContent=''">닫기</button>
+      </div>
+      <pre class="mono max-h-[70vh] overflow-auto whitespace-pre-wrap px-5 py-4 text-[11px] leading-snug text-zinc-300">{{ logContent }}</pre>
+    </div>
+  </div>
+
+  <p class="mt-8 text-center text-[11px] leading-relaxed text-zinc-600">
+    llm-inference-bench: 동시성×컨텍스트 행렬의 지속 디코드 처리량(스마트 스킵, KV 예산 자동 감지) — decode는 sustained, 헤드리인 프리필은 scout TTFT 기준<br>
+    lm-evaluation-harness: 표준 벤치 태스크 정확도(acc/acc_norm 등, 로그로그리들리 기반) — 태스크마다 수분이 걸릴 수 있습니다 · 한 번에 하나의 외부 벤치만 실행됩니다
+  </p>
+</div>
+
+<div id="float-panels-root"></div>
+<script src="/float-panels.js"></script>
+<script>
+const { createApp } = Vue;
+createApp({
+  data() {
+    return {
+      cards: [], results: [], jobs: [], services: [], svcError: '', error: '',
+      models: {}, jobTails: {},
+      tools: { lib_ready: false, lmeval_ready: false, setup_script: 'bench_tools/setup_bench_tools.sh' },
+      taskNames: [], copied: false, logContent: '', logPath: '',
+      popularTasks: ['mmlu','hellaswag','arc_easy','arc_challenge','gsm8k','truthfulqa','bbh','pole_in_bloom','kmmlu'],
+    };
+  },
+  computed: {
+    running() { return this.jobs.some(j => j.status === 'running'); },
+  },
+  methods: {
+    async api(path, opts = {}) {
+      if (opts.body !== undefined) {
+        opts.method = opts.method || 'POST';
+        opts.headers = { 'Content-Type': 'application/json' };
+        opts.body = JSON.stringify(opts.body);
+      }
+      const r = await fetch(path, opts);
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.detail || r.statusText);
+      return j;
+    },
+    fail(e) { this.error = String(e.message || e); },
+    async refresh() {
+      try {
+        const d = await this.api('/api/bench-suite');
+        this.cards = d.cards || [];
+        this.results = d.results || [];
+        this.jobs = (d.jobs || []).filter(j => j.status === 'running');
+        for (const j of this.jobs) this.fetchLogTail(j);
+        for (const c of this.cards) if (!this.models[c.id] && c.models) this.models[c.id] = c.models;
+        const t = await this.api('/api/bench-suite/tool-status');
+        this.tools = { ...this.tools, ...t };
+        if (this.tools.lmeval_ready && !this.taskNames.length) this.loadTasks();
+      } catch (e) { this.fail(e); }
+    },
+    async refreshServices() {
+      try {
+        const d = await this.api('/api/llm-bench/services');
+        this.services = d.services || [];
+        this.svcError = d.error || '';
+      } catch (e) { this.svcError = String(e.message || e); }
+    },
+    async loadTasks() {
+      try {
+        const d = await this.api('/api/bench-suite/tasks');
+        this.taskNames = (d.tasks || []).map(t => t.name);
+      } catch (e) { /* 태스크 목록 실패는 입력 자체를 막지 않음 */ }
+    },
+    async addCard(suite) {
+      try {
+        const d = await this.api('/api/bench-suite/cards', { body: { suite } });
+        await this.refresh();
+      } catch (e) { this.fail(e); }
+    },
+    async patchCard(card, patch) {
+      try { await this.api('/api/bench-suite/cards/' + card.id, { method: 'PATCH', body: patch }); await this.refresh(); }
+      catch (e) { this.fail(e); }
+    },
+    async pickService(card, svc) {
+      try {
+        await this.api('/api/bench-suite/cards/' + card.id, { method: 'PATCH', body: { service_key: svc.key } });
+        await this.refresh();
+      } catch (e) { this.fail(e); }
+    },
+    async reprobe(card) {
+      try {
+        await this.api('/api/bench-suite/cards/' + card.id, { method: 'PATCH', body: { service_key: card.service_key } });
+        await this.refresh();
+      } catch (e) { this.fail(e); }
+    },
+    async run(card, preset) {
+      if (!card.service_key) { this.error = '벤치할 서버를 먼저 선택하세요'; return; }
+      try {
+        await this.api('/api/bench-suite/run', { body: { card_id: card.id, suite: card.suite, preset } });
+        await this.refresh();
+      } catch (e) { this.fail(e); }
+    },
+    async cancelJob(job) {
+      try { await this.api('/api/bench-suite/jobs/' + job.id + '/cancel', { body: {} }); }
+      catch (e) { this.fail(e); }
+    },
+    async removeCard(card) {
+      if (!confirm(`"${card.title}" 카드와 기록된 결과를 모두 삭제할까요?`)) return;
+      try { await this.api('/api/bench-suite/cards/' + card.id, { method: 'DELETE' }); await this.refresh(); }
+      catch (e) { this.fail(e); }
+    },
+    async removeResult(r) {
+      if (!confirm('이 실행 기록을 삭제할까요?')) return;
+      try { await this.api('/api/bench-suite/results/' + r.id, { method: 'DELETE' }); await this.refresh(); }
+      catch (e) { this.fail(e); }
+    },
+    async openLog(r) {
+      try {
+        const d = await this.api('/api/bench-suite/logs?path=' + encodeURIComponent(r.log_file));
+        this.logPath = d.path; this.logContent = d.content;
+      } catch (e) { this.fail(e); }
+    },
+    jobTails: {},
+    async fetchLogTail(job) {
+      try {
+        const d = await this.api('/api/bench-suite/jobs/' + job.id);
+        this.jobTails[job.id] = (d.log_tail || '').split('\r').join('\n').split('\n')
+          .filter(l => l.trim() && !/it\/s\]|\d+%\|/.test(l)).slice(-25).join('\n');
+      } catch (e) { /* 다음 폴에서 재시도 */ }
+    },
+    logTail(job) { return this.jobTails[job.id] || '로그 수신 중…'; },
+    jobFor(cardId) { return this.jobs.find(j => j.card_id === cardId && j.status === 'running'); },
+    resultsFor(cardId) { return this.results.filter(r => r.card_id === cardId); },
+    modelsOf(card) { return this.models[card.id] || (card.models || []); },
+    isVllm(card) { return (card.engine || '').toLowerCase().includes('vllm'); },
+    addTask(card, g) {
+      const cur = (card.lme.tasks || '').split(',').map(x => x.trim()).filter(Boolean);
+      const cand = this.taskNames.length ? [g, ...this.taskNames.filter(t => t.startsWith(g))] : [g];
+      const pick = cand.find(t => !cur.includes(t));
+      if (!pick) return;
+      cur.push(pick);
+      card.lme.tasks = cur.join(',');
+      this.patchCard(card, { lme: card.lme });
+    },
+    metricColumns(r) {
+      const seen = new Set();
+      for (const t of (r.tasks || [])) for (const m of t.metrics) seen.add(m.metric);
+      return ['acc', 'acc_norm', 'exact_match', 'f1'].filter(m => seen.has(m))
+        .concat([...seen].filter(m => !['acc', 'acc_norm', 'exact_match', 'f1'].includes(m)).slice(0, 3));
+    },
+    suiteLabel(s) { return s === 'lib' ? 'llm-inference-bench' : 'lm-eval-harness'; },
+    presetLabel(p) {
+      return { lib_quick: '빠른 매트릭스', lib_standard: '표준 매트릭스', lib_full: '전체 매트릭스', lib_custom: '커스텀 매트릭스',
+               lme_quick: 'lm-eval 스모크', lme_standard: 'lm-eval 표준', lme_custom: 'lm-eval 커스텀' }[p] || p;
+    },
+    elapsed(job) {
+      const s = Math.max(0, Math.round((Date.now() - new Date(job.started_at).getTime()) / 1000));
+      return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+    },
+    fmtDur(s) { return s >= 60 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${Math.round(s)}s`; },
+    fmtN(v) { return v == null ? '—' : Number(v).toLocaleString('ko-KR'); },
+    round(v) { return v == null ? null : Math.round(v); },
+    fmtTok(v) { return v === 0 ? '0' : (v >= 1024 ? (v / 1024) + 'k' : v + 't'); },
+    pct(v) { return v == null ? '—' : (v <= 1 ? (v * 100).toFixed(1) : v.toFixed(1)) + '%'; },
+    copySetup() { navigator.clipboard.writeText('bash ' + this.tools.setup_script); this.copied = true; setTimeout(() => this.copied = false, 1500); },
+    fmtTs(iso) {
+      if (!iso) return '—';
+      return new Date(iso).toLocaleString('ko-KR', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    },
+  },
+  mounted() {
+    this.models = {};
+    this.refresh();
+    this.refreshServices();
+    setInterval(() => this.refresh(), 2500);
+    setInterval(() => this.refreshServices(), 20000);
+  },
+}).mount('#app');
+</script>
+</body>
+</html>

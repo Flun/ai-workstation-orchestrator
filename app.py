@@ -59,6 +59,7 @@ import cmp170tune
 import vram_arbiter
 from vram_arbiter import router as gpu_arbiter_router, proxy_router as gpu_arbiter_proxy_router
 import llm_bench
+import bench_suite
 
 HOST = "0.0.0.0"
 PORT = 8999
@@ -161,6 +162,7 @@ app.include_router(os_boot_router)
 app.include_router(gpu_arbiter_router)
 app.include_router(gpu_arbiter_proxy_router)
 app.include_router(llm_bench.router)
+app.include_router(bench_suite.router)
 
 
 # ---------- 유틸 ----------
@@ -1657,6 +1659,14 @@ def llm_bench_page():
     )
 
 
+@app.get("/bench-suite", response_class=HTMLResponse)
+def bench_suite_page():
+    return FileResponse(
+        os.path.join(BASE_DIR, "bench_suite.html"),
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
 # ---------- 벤더 스크립트 ----------
 # xterm.js 계열은 CDN(jsdelivr)이 들쭉날쭉 끊겨 터미널 탭이 조용히 안 뜨는
 # 일이 있어서, pin된 버전을 repo의 vendor/ 에 들여와 앱이 직접 서빙한다.
@@ -2058,6 +2068,7 @@ def _bench_llm_services():
 
 
 llm_bench.set_service_discovery(_bench_llm_services)
+bench_suite.set_service_discovery(_bench_llm_services)
 
 
 def _comfy_instances_payload():

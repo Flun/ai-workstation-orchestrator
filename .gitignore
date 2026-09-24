@@ -46,3 +46,7 @@ _ps3.ps1
 _ps4.ps1
 .DS_Store
 ._.DS_Store
+
+bench_tools/
+bench_suite_logs/
+bench_suite.json
