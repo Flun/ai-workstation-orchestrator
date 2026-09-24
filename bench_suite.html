@@ -272,27 +272,50 @@
 
             <!-- lme: 태스크 점수 -->
             <template v-if="r.suite==='lme'">
-              <div v-if="r.meta && r.meta.limit" class="mt-1 text-[10px] text-zinc-500">limit {{ r.meta.limit }} · few-shot {{ r.meta.num_fewshot==null ? '태스크 기본' : r.meta.num_fewshot }}</div>
-              <div v-if="r.tasks && r.tasks.length" class="mt-2 overflow-x-auto">
+              <div v-if="lmeRows(r).length" class="mt-2 flex flex-wrap gap-2 text-[11px]">
+                <span v-for="row in lmeRows(r)" :key="'s'+row.task" class="chip"
+                      :class="row.metrics.length ? 'bg-zinc-800 text-zinc-200' : 'bg-rose-500/15 text-rose-300'">
+                  {{ row.task }} → <b class="text-emerald-300">{{ row.metrics.length ? primaryPct(row) : '실패' }}</b>
+                </span>
+                <span class="chip bg-zinc-900 text-zinc-500">avg <b class="text-teal-300">{{ lmeAvg(r) }}</b></span>
+              </div>
+              <div v-if="lmeRows(r).length" class="mt-2 overflow-x-auto">
                 <table class="w-full">
-                  <thead><tr><th>태스크</th><th>n</th><th v-for="m in metricColumns(r)" :key="m">{{ m }}</th></tr></thead>
+                  <thead><tr><th>태스크</th><th>n</th><th>주 지표</th><th>보조 지표</th></tr></thead>
                   <tbody>
-                    <tr v-for="t in r.tasks" :key="t.task">
-                      <td>{{ t.alias }}<span v-if="t.samples" class="ml-1 text-[10px] text-zinc-600">({{ t.samples }})</span></td>
-                      <td class="text-zinc-500">{{ fmtN(t.samples) }}</td>
-                      <td v-for="m in metricColumns(r)" :key="m" class="font-semibold text-emerald-300">
-                        <template v-for="mm in t.metrics.filter(x=>x.metric===m)">
-                          {{ pct(mm.value) }}<span v-if="mm.stderr!=null" class="text-[10px] font-normal text-zinc-500"> ±{{ pct(mm.stderr) }}</span>
-                        </template>
-                        <template v-if="!t.metrics.some(x=>x.metric===m)">—</template>
+                    <tr v-for="row in lmeRows(r)" :key="row.task">
+                      <td class="!text-left font-semibold text-zinc-200">{{ row.task }}
+                        <span v-if="row.children && row.children.length" class="ml-1 text-[10px] font-normal text-zinc-500">({{ row.children.length }}개 하위)</span>
                       </td>
+                      <td class="text-zinc-500">{{ fmtN(row.samples) }}</td>
+                      <td class="font-bold text-emerald-300">{{ row.primary ? row.primary.text : '—' }}</td>
+                      <td class="text-zinc-400 !whitespace-normal" style="max-width:340px">{{ row.restText || '—' }}</td>
                     </tr>
                   </tbody>
                 </table>
+                <details v-if="lmeRows(r).some(x=>x.children&&x.children.length)" class="mt-1.5">
+                  <summary class="text-[10px] text-zinc-500 hover:text-zinc-300">하위 태스크 점수 펼치기</summary>
+                  <table class="mt-1 w-full">
+                    <tbody>
+                      <template v-for="row in lmeRows(r)" :key="'g'+row.task">
+                        <tr v-for="c in row.children||[]" :key="row.task+c.task" class="text-zinc-500">
+                          <td class="!text-left !pl-6 text-[11px]">↳ {{ c.task }}</td>
+                          <td class="text-[11px]">{{ fmtN(c.samples) }}</td>
+                          <td class="text-[11px] text-emerald-300/80">{{ c.primary ? c.primary.text : '—' }}</td>
+                          <td></td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </details>
+              </div>
+              <div v-else-if="r.requested" class="mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
+                <span class="text-zinc-500">실패한 태스크:</span>
+                <span v-for="t in r.requested" :key="t" class="chip bg-rose-500/15 text-rose-300">{{ t }}</span>
               </div>
             </template>
 
-            <div v-if="r.error" class="mono mt-1 whitespace-pre-wrap text-[10px] text-rose-300/80">{{ r.error }}</div>
+            <div v-if="r.error" class="mono mt-1 rounded-lg border border-rose-500/25 bg-rose-500/10 px-3 py-2 whitespace-pre-wrap text-[11px] leading-snug text-rose-300">{{ r.error }}</div>
             <div class="mono mt-1.5 truncate text-[10px] text-zinc-600" :title="r.command">{{ r.command }}</div>
           </article>
         </div>
@@ -463,6 +486,44 @@ createApp({
     modelsOf(card) { return this.models[card.id] || (card.models || []); },
     isVllm(card) { return (card.engine || '').toLowerCase().includes('vllm'); },
     taskList(card) { return (card.lme.tasks || '').split(',').map(x => x.trim()).filter(Boolean); },
+    // lm-eval 결과를 "요청 태스크 1행" 기준으로 정리 — 그룹(mmlu_pro 등)은
+    // 집계 행만 노출하고 하위 태스크는 children으로 접는다.
+    lmeRows(r) {
+      const tasks = r.tasks || [];
+      if (!tasks.length) return [];
+      const byName = new Map(tasks.map(t => [t.task, t]));
+      const groups = r.groups || {};
+      const children = new Set(Object.values(groups).flat());
+      const primaries = (r.requested && r.requested.length ? r.requested : tasks.map(t => t.task))
+        .filter((v, i, a) => a.indexOf(v) === i);
+      return primaries.map(name => {
+        const row = this._lmeRow(byName.get(name), name);
+        const subs = (groups[name] || []).filter(s => byName.has(s)).map(s => this._lmeRow(byName.get(s), s));
+        if (subs.length) {
+          row.children = subs;
+          row.samples = subs.reduce((a, c) => a + (c.samples || 0), 0) || row.samples;
+        }
+        return row;
+      });
+    },
+    _lmeRow(t, name) {
+      const metrics = t ? t.metrics : [];
+      let primary = null;
+      const rank = ['acc_norm', 'acc', 'exact_match', 'exact_match_strict', 'prompt_level_strict_acc'];
+      for (const m of rank) { const hit = metrics.find(x => x.metric === m); if (hit) { primary = hit; break; } }
+      if (!primary && metrics.length) primary = metrics[0];
+      const others = metrics.filter(x => x !== primary);
+      return {
+        task: name, samples: t ? t.samples : null, metrics,
+        primary: primary ? { text: this.pct(primary.value) + (primary.stderr != null ? ' ±' + this.pct(primary.stderr) : ''), value: primary.value, metric: primary.metric } : null,
+        restText: others.map(x => `${x.metric} ${this.pct(x.value)}`).join(' · '),
+      };
+    },
+    primaryPct(row) { return row.primary ? row.primary.text.split(' ')[0] : '—'; },
+    lmeAvg(r) {
+      const vals = this.lmeRows(r).map(x => x.primary && x.primary.value).filter(v => v != null);
+      return vals.length ? (vals.reduce((a, b) => a + b, 0) / vals.length * 100).toFixed(1) : '—';
+    },
     addTask(card, g) {
       const cur = this.taskList(card);
       const cand = this.taskNames.length ? [g, ...this.taskNames.filter(t => t.startsWith(g))] : [g];

@@ -172,7 +172,7 @@ def lmeval_tasks():
         if not name or name == "Group" or set(name) <= set("-"):
             continue
         rows.append({"name": name, "group": "/_groups/" in loc, "path": loc})
-    payload = {"tasks": rows}
+    payload = {"tasks": rows, "names": [r["name"] for r in rows]}
     _tasks_cache.update({"ts": now, "data": payload})
     return payload
 
@@ -231,6 +231,15 @@ def _lme_command(card, preset):
     tasks = str(preset.get("tasks") or "").strip()
     if not tasks or not _LME_PAT.match(tasks):
         raise HTTPException(400, "태스크 목록은 쉼표로 구분된 이름만 가능합니다")
+    # 쉼표/공백으로 나눠 공백을 제거 — lm-eval은 쉼표만 나눠 ' gsm8k'를 모르는 태스크로 본다.
+    task_list = [t for t in re.split(r"[,\s]+", tasks) if t]
+    known = (_tasks_cache["data"] or {}).get("names")
+    if known:
+        missing = [t for t in task_list if t not in known]
+        if missing:
+            raise HTTPException(400, "lm-eval이 모르는 태스크: " + ", ".join(missing)
+                                 + " — 자동완성 목록에서 선택하세요")
+    tasks = ",".join(task_list)
     limit = preset.get("limit")
     try:
         limit = int(limit) if limit not in (None, "") else None
@@ -420,6 +429,7 @@ def _parse_lme_result(out_dir):
         "meta": {"model_args": cfg.get("model_args"), "num_fewshot": cfg.get("num_fewshot"),
                  "limit": cfg.get("limit"), "config_model": cfg.get("model")},
         "tasks": tasks,
+        "groups": {k: v for k, v in (data.get("group_subtasks") or {}).items() if v},
         "date": data.get("date"),
     }
 
@@ -445,6 +455,13 @@ def _finalize(job, card, target, status, exit_code):
     if parsed is None and status == "done":
         status = "error"
         job["error"] = "결과 파일을 찾지 못했습니다 (실행은 끝났지만 산출물이 없음)"
+    if status == "error":
+        tail = _read_log_tail(job["log_file"])
+        if "gated dataset" in tail:
+            job["error"] = (job.get("error") or "") + \
+                " · 게이트된 HF 데이터셋(gpqa 등)입니다 — bench_tools/.venv/bin/hf auth login 후 재실행"
+        elif "DatasetNotFoundError" in tail:
+            job["error"] = (job.get("error") or "") + " · 데이터셋을 받지 못했습니다 (네트워크/이름 확인)"
 
     duration = round(time.monotonic() - job["started_mono"], 1)
     with _store_lock:
@@ -460,8 +477,11 @@ def _finalize(job, card, target, status, exit_code):
             "finished_at": finished,
             "duration_s": duration,
             "exit_code": exit_code,
+            "status": status,
+            "error": job.get("error"),
             "log_file": os.path.relpath(job["log_file"], BASE_DIR),
             "command": _sanitize(" ".join(job["command"])),
+            "requested": job.get("requested"),
             "meta": {"engine": target["engine"], "model": card.get("model"),
                      "serving": target["service_label"], "api_url": target["api_url"]},
         }
@@ -680,6 +700,8 @@ def suite_run(data: dict):
     if not _run_lock.acquire(blocking=False):
         raise HTTPException(409, "다른 외부 벤치가 이미 실행 중입니다. 끝나고 나서 다시 시도하세요")
     job = _new_job(card_id, suite, preset_id, command, artifact)
+    if suite == "lme":
+        job["requested"] = [t for t in re.split(r"[,\s]+", str(args.get("tasks") or "")) if t]
     job["_lock_held"] = True
     threading.Thread(target=_worker, args=(job, card, target, preset_id),
                      name=f"bench-suite-{job['id']}", daemon=True).start()
