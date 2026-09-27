@@ -163,9 +163,14 @@ def _build_prompt(origin, model, target_tokens, rng):
 
 
 def _stop_params(engine, gen_tokens):
-    """엔진별로 early-stop(EOS)을 막아 gen_tokens를 채우게 하는 파라미터."""
+    """엔진별로 early-stop(EOS)을 막아 gen_tokens를 채우게 하는 파라미터.
+
+    llama.cpp 서버는 min_tokens를 모르고 조용히 무시한다 — EOS가 곧바로 나오면
+    1토큰만 생성되고 decode가 무너진다(실측: min_tokens 64 → 1토큰 stop).
+    ignore_eos는 vLLM/llama.cpp 둘 다 지원하므로 기본값으로 쓴다.
+    """
     if engine == "llama.cpp":
-        return {"min_tokens": gen_tokens}
+        return {"ignore_eos": True, "min_tokens": gen_tokens}
     return {"ignore_eos": True}
 
 
@@ -657,7 +662,15 @@ def _run_benchmark(job, card, api_url, model, engine, max_context, serving_label
             stage["ttft_s"] = round(decode["ttft"], 3)
             stage["pp_tok_s"] = round(tok / max(decode["ttft"], 1e-6), 1)
             decode_window = max(decode["total"] - decode["ttft"], 1e-6)
-            stage["decode_tok_s"] = round(max(gen - 1, 1) / decode_window, 1)
+            # decode는 첫 토큰 이후 구간이 실제로 존재할 때만 유효. EOS로 1토큰
+            # 밖에 못 만들면 창이 0에 수렴해 max(gen-1,1)/1e-6 = 1,000,000 같은
+            # 고정값이 찍힌다 — 이 경우 None(표에서는 —)으로 두고_note_로 알린다.
+            if gen > 1 and decode["total"] - decode["ttft"] > 0.1:
+                stage["decode_tok_s"] = round(max(gen - 1, 1) / decode_window, 1)
+            else:
+                stage["decode_tok_s"] = None
+                stage["note"] = (stage["note"] + " " if stage["note"] else "") + \
+                    "decode 창이 없어 측정 불가(생성 1토큰)"
             stage["decode_tokens"] = gen
             stage["total_s"] = round(decode["total"], 3)
             if gen < GEN_TOKENS * 0.9:
