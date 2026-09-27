@@ -1,6 +1,132 @@
 {
   "cards": [
     {
+      "id": "e90128ecab22",
+      "title": "새 벤치마크 09-25 23:11",
+      "created_at": "2026-09-25T23:11:28+09:00",
+      "api_url": "http://127.0.0.1:8000/v1",
+      "source": "auto",
+      "source_label": "vLLM · 슬롯 gemma4_no_mtp",
+      "engine": "vLLM",
+      "model": "gemma4-31b-no-mtp-bf16kv-fast",
+      "max_context": 262144,
+      "probed_at": "2026-09-25T23:11:41+09:00",
+      "conc": false,
+      "users": 4,
+      "models": [
+        "gemma4-31b-no-mtp-bf16kv-fast"
+      ],
+      "max_context_source": "/v1/models.max_model_len"
+    },
+    {
+      "id": "6dde258cbb21",
+      "title": "새 벤치마크 09-25 22:47",
+      "created_at": "2026-09-25T22:47:50+09:00",
+      "api_url": "http://127.0.0.1:8000/v1",
+      "source": "auto",
+      "source_label": "vLLM · 슬롯 gemma4",
+      "engine": "vLLM",
+      "model": "gemma4-31b-mtp-bf16kv-fast",
+      "max_context": 262144,
+      "probed_at": "2026-09-25T22:49:25+09:00",
+      "conc": false,
+      "users": 4,
+      "models": [
+        "gemma4-31b-mtp-bf16kv-fast"
+      ],
+      "max_context_source": "/v1/models.max_model_len"
+    },
+    {
+      "id": "13bd8d027ba9",
+      "title": "새 벤치마크 09-25 22:25",
+      "created_at": "2026-09-25T22:25:56+09:00",
+      "api_url": "http://127.0.0.1:8000/v1",
+      "source": "auto",
+      "source_label": "vLLM · 슬롯 gemma4",
+      "engine": "vLLM",
+      "model": "gemma4-31b-mtp-bf16kv-fast",
+      "max_context": 262144,
+      "probed_at": "2026-09-25T22:26:38+09:00",
+      "conc": false,
+      "users": 4,
+      "models": [
+        "gemma4-31b-mtp-bf16kv-fast"
+      ],
+      "max_context_source": "/v1/models.max_model_len"
+    },
+    {
+      "id": "8525837f92e4",
+      "title": "새 벤치마크 09-25 21:08",
+      "created_at": "2026-09-25T21:08:44+09:00",
+      "api_url": "http://127.0.0.1:8000/v1",
+      "source": "auto",
+      "source_label": "vLLM · 슬롯 test2",
+      "engine": "vLLM",
+      "model": "qwen3.8-flash-next",
+      "max_context": 262144,
+      "probed_at": "2026-09-25T21:20:31+09:00",
+      "conc": true,
+      "users": 8,
+      "models": [
+        "qwen3.8-flash-next"
+      ],
+      "max_context_source": "/v1/models.max_model_len"
+    },
+    {
+      "id": "bf48598597f6",
+      "title": "새 벤치마크 09-25 18:02",
+      "created_at": "2026-09-25T18:02:33+09:00",
+      "api_url": "http://127.0.0.1:8000/v1",
+      "source": "auto",
+      "source_label": "vLLM · 슬롯 test2",
+      "engine": "vLLM",
+      "model": "qwen3.8-flash-next",
+      "max_context": 262144,
+      "probed_at": "2026-09-25T18:05:49+09:00",
+      "conc": false,
+      "users": 4,
+      "models": [
+        "qwen3.8-flash-next"
+      ],
+      "max_context_source": "/v1/models.max_model_len"
+    },
+    {
+      "id": "9bec7aea4ad5",
+      "title": "새 벤치마크 09-25 11:05",
+      "created_at": "2026-09-25T11:05:13+09:00",
+      "api_url": "http://127.0.0.1:8000/v1",
+      "source": "auto",
+      "source_label": "vLLM · 슬롯 qwen3.8-27b-단일",
+      "engine": "vLLM",
+      "model": "qwen3.8-flash-next",
+      "max_context": 262144,
+      "probed_at": "2026-09-25T11:07:10+09:00",
+      "conc": false,
+      "users": 4,
+      "models": [
+        "qwen3.8-flash-next"
+      ],
+      "max_context_source": "/v1/models.max_model_len"
+    },
+    {
+      "id": "b74e4d85b4a6",
+      "title": "새 벤치마크 09-24 20:56",
+      "created_at": "2026-09-24T20:56:46+09:00",
+      "api_url": "http://127.0.0.1:8000/v1",
+      "source": "auto",
+      "source_label": "vLLM · 슬롯 Qwen3.8-Flash-Next-Uncensored-AWQ-g32",
+      "engine": "vLLM",
+      "model": "qwen3.8-flash-next",
+      "max_context": 262144,
+      "probed_at": "2026-09-24T20:58:03+09:00",
+      "conc": false,
+      "users": 4,
+      "models": [
+        "qwen3.8-flash-next"
+      ],
+      "max_context_source": "/v1/models.max_model_len"
+    },
+    {
       "id": "63f03006d219",
       "title": "새 벤치마크 09-24 20:02",
       "created_at": "2026-09-24T20:02:12+09:00",
@@ -146,6 +272,1404 @@
     }
   ],
   "results": [
+    {
+      "id": "0b794ac08cec",
+      "card_id": "e90128ecab22",
+      "card_title": "새 벤치마크 09-25 23:11",
+      "kind": "detailed",
+      "kind_label": "상세 벤치마크 (1k→64k)",
+      "started_at": "2026-09-25T23:11:41+09:00",
+      "finished_at": "2026-09-25T23:14:34+09:00",
+      "duration_s": 173.1,
+      "partial": false,
+      "meta": {
+        "api_url": "http://127.0.0.1:8000/v1",
+        "engine": "vLLM",
+        "serving": "vLLM · 슬롯 gemma4_no_mtp",
+        "model": "gemma4-31b-no-mtp-bf16kv-fast",
+        "max_context": 262144,
+        "gen_tokens": 128,
+        "users": 1,
+        "server_cold": false
+      },
+      "stages": [
+        {
+          "target_tokens": 1024,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 1037,
+          "ttft_s": 0.602,
+          "pp_tok_s": 1723.9,
+          "decode_tok_s": 51.6,
+          "decode_tokens": 128,
+          "total_s": 3.062
+        },
+        {
+          "target_tokens": 2048,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 2036,
+          "ttft_s": 1.221,
+          "pp_tok_s": 1667.2,
+          "decode_tok_s": 52.2,
+          "decode_tokens": 128,
+          "total_s": 3.654
+        },
+        {
+          "target_tokens": 4096,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 4105,
+          "ttft_s": 2.543,
+          "pp_tok_s": 1614.0,
+          "decode_tok_s": 50.7,
+          "decode_tokens": 128,
+          "total_s": 5.048
+        },
+        {
+          "target_tokens": 8192,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 8209,
+          "ttft_s": 5.619,
+          "pp_tok_s": 1460.9,
+          "decode_tok_s": 48.8,
+          "decode_tokens": 128,
+          "total_s": 8.224
+        },
+        {
+          "target_tokens": 16384,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 16381,
+          "ttft_s": 13.05,
+          "pp_tok_s": 1255.3,
+          "decode_tok_s": 46.2,
+          "decode_tokens": 128,
+          "total_s": 15.796
+        },
+        {
+          "target_tokens": 32768,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 32783,
+          "ttft_s": 33.677,
+          "pp_tok_s": 973.5,
+          "decode_tok_s": 41.1,
+          "decode_tokens": 128,
+          "total_s": 36.763
+        },
+        {
+          "target_tokens": 65536,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 65551,
+          "ttft_s": 96.758,
+          "pp_tok_s": 677.5,
+          "decode_tok_s": 36.6,
+          "decode_tokens": 128,
+          "total_s": 100.231
+        }
+      ],
+      "summary": {
+        "pp_tok_s": 1723.9,
+        "decode_tok_s": 36.6,
+        "best_pp_tok_s": 1723.9
+      }
+    },
+    {
+      "id": "98296de70f6a",
+      "card_id": "e90128ecab22",
+      "card_title": "새 벤치마크 09-25 23:11",
+      "kind": "quick",
+      "kind_label": "짧은 벤치마크",
+      "started_at": "2026-09-25T23:11:31+09:00",
+      "finished_at": "2026-09-25T23:11:36+09:00",
+      "duration_s": 4.5,
+      "partial": false,
+      "meta": {
+        "api_url": "http://127.0.0.1:8000/v1",
+        "engine": "vLLM",
+        "serving": "vLLM · 슬롯 gemma4_no_mtp",
+        "model": "gemma4-31b-no-mtp-bf16kv-fast",
+        "max_context": 262144,
+        "gen_tokens": 128,
+        "users": 1,
+        "server_cold": true
+      },
+      "stages": [
+        {
+          "target_tokens": 2048,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 2041,
+          "ttft_s": 2.05,
+          "pp_tok_s": 995.7,
+          "decode_tok_s": 52.4,
+          "decode_tokens": 128,
+          "total_s": 4.475
+        }
+      ],
+      "summary": {
+        "pp_tok_s": 995.7,
+        "decode_tok_s": 52.4,
+        "best_pp_tok_s": 995.7
+      }
+    },
+    {
+      "id": "8809b56dff0e",
+      "card_id": "6dde258cbb21",
+      "card_title": "새 벤치마크 09-25 22:47",
+      "kind": "detailed",
+      "kind_label": "상세 벤치마크 (1k→64k)",
+      "started_at": "2026-09-25T22:49:25+09:00",
+      "finished_at": "2026-09-25T22:52:16+09:00",
+      "duration_s": 171.5,
+      "partial": false,
+      "meta": {
+        "api_url": "http://127.0.0.1:8000/v1",
+        "engine": "vLLM",
+        "serving": "vLLM · 슬롯 gemma4",
+        "model": "gemma4-31b-mtp-bf16kv-fast",
+        "max_context": 262144,
+        "gen_tokens": 128,
+        "users": 1,
+        "server_cold": false
+      },
+      "stages": [
+        {
+          "target_tokens": 1024,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 1027,
+          "ttft_s": 0.598,
+          "pp_tok_s": 1717.3,
+          "decode_tok_s": 167.2,
+          "decode_tokens": 128,
+          "total_s": 1.357
+        },
+        {
+          "target_tokens": 2048,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 2053,
+          "ttft_s": 1.228,
+          "pp_tok_s": 1672.3,
+          "decode_tok_s": 154.6,
+          "decode_tokens": 128,
+          "total_s": 2.049
+        },
+        {
+          "target_tokens": 4096,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 4096,
+          "ttft_s": 2.515,
+          "pp_tok_s": 1628.9,
+          "decode_tok_s": 101.2,
+          "decode_tokens": 128,
+          "total_s": 3.77
+        },
+        {
+          "target_tokens": 8192,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 8191,
+          "ttft_s": 5.615,
+          "pp_tok_s": 1458.9,
+          "decode_tok_s": 112.2,
+          "decode_tokens": 128,
+          "total_s": 6.746
+        },
+        {
+          "target_tokens": 16384,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 16381,
+          "ttft_s": 13.152,
+          "pp_tok_s": 1245.5,
+          "decode_tok_s": 69.3,
+          "decode_tokens": 128,
+          "total_s": 14.984
+        },
+        {
+          "target_tokens": 32768,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 32783,
+          "ttft_s": 35.239,
+          "pp_tok_s": 930.3,
+          "decode_tok_s": 79.9,
+          "decode_tokens": 128,
+          "total_s": 36.828
+        },
+        {
+          "target_tokens": 65536,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 65551,
+          "ttft_s": 102.976,
+          "pp_tok_s": 636.6,
+          "decode_tok_s": 51.4,
+          "decode_tokens": 128,
+          "total_s": 105.447
+        }
+      ],
+      "summary": {
+        "pp_tok_s": 1717.3,
+        "decode_tok_s": 51.4,
+        "best_pp_tok_s": 1717.3
+      }
+    },
+    {
+      "id": "3698a8a65c98",
+      "card_id": "6dde258cbb21",
+      "card_title": "새 벤치마크 09-25 22:47",
+      "kind": "quick",
+      "kind_label": "짧은 벤치마크",
+      "started_at": "2026-09-25T22:47:54+09:00",
+      "finished_at": "2026-09-25T22:47:56+09:00",
+      "duration_s": 2.0,
+      "partial": false,
+      "meta": {
+        "api_url": "http://127.0.0.1:8000/v1",
+        "engine": "vLLM",
+        "serving": "vLLM · 슬롯 gemma4",
+        "model": "gemma4-31b-mtp-bf16kv-fast",
+        "max_context": 262144,
+        "gen_tokens": 128,
+        "users": 1,
+        "server_cold": false
+      },
+      "stages": [
+        {
+          "target_tokens": 2048,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 2029,
+          "ttft_s": 1.212,
+          "pp_tok_s": 1674.1,
+          "decode_tok_s": 165.9,
+          "decode_tokens": 128,
+          "total_s": 1.978
+        }
+      ],
+      "summary": {
+        "pp_tok_s": 1674.1,
+        "decode_tok_s": 165.9,
+        "best_pp_tok_s": 1674.1
+      }
+    },
+    {
+      "id": "408d905bdd34",
+      "card_id": "13bd8d027ba9",
+      "card_title": "새 벤치마크 09-25 22:25",
+      "kind": "detailed",
+      "kind_label": "상세 벤치마크 (1k→64k)",
+      "started_at": "2026-09-25T22:26:38+09:00",
+      "finished_at": "2026-09-25T22:29:38+09:00",
+      "duration_s": 180.1,
+      "partial": false,
+      "meta": {
+        "api_url": "http://127.0.0.1:8000/v1",
+        "engine": "vLLM",
+        "serving": "vLLM · 슬롯 gemma4",
+        "model": "gemma4-31b-mtp-bf16kv-fast",
+        "max_context": 262144,
+        "gen_tokens": 128,
+        "users": 1,
+        "server_cold": false
+      },
+      "stages": [
+        {
+          "target_tokens": 1024,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 1015,
+          "ttft_s": 0.585,
+          "pp_tok_s": 1733.9,
+          "decode_tok_s": 164.5,
+          "decode_tokens": 128,
+          "total_s": 1.357
+        },
+        {
+          "target_tokens": 2048,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 2041,
+          "ttft_s": 1.159,
+          "pp_tok_s": 1760.7,
+          "decode_tok_s": 156.2,
+          "decode_tokens": 128,
+          "total_s": 1.972
+        },
+        {
+          "target_tokens": 4096,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 4105,
+          "ttft_s": 2.464,
+          "pp_tok_s": 1666.0,
+          "decode_tok_s": 144.8,
+          "decode_tokens": 128,
+          "total_s": 3.341
+        },
+        {
+          "target_tokens": 8192,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 8209,
+          "ttft_s": 5.67,
+          "pp_tok_s": 1447.7,
+          "decode_tok_s": 129.9,
+          "decode_tokens": 128,
+          "total_s": 6.648
+        },
+        {
+          "target_tokens": 16384,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 16379,
+          "ttft_s": 13.014,
+          "pp_tok_s": 1258.6,
+          "decode_tok_s": 86.7,
+          "decode_tokens": 128,
+          "total_s": 14.478
+        },
+        {
+          "target_tokens": 32768,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 32761,
+          "ttft_s": 34.435,
+          "pp_tok_s": 951.4,
+          "decode_tok_s": 52.9,
+          "decode_tokens": 128,
+          "total_s": 36.835
+        },
+        {
+          "target_tokens": 65536,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 65521,
+          "ttft_s": 101.992,
+          "pp_tok_s": 642.4,
+          "decode_tok_s": 9.7,
+          "decode_tokens": 128,
+          "total_s": 115.103
+        }
+      ],
+      "summary": {
+        "pp_tok_s": 1733.9,
+        "decode_tok_s": 9.7,
+        "best_pp_tok_s": 1760.7
+      }
+    },
+    {
+      "id": "f5a2f6ed9805",
+      "card_id": "13bd8d027ba9",
+      "card_title": "새 벤치마크 09-25 22:25",
+      "kind": "quick",
+      "kind_label": "짧은 벤치마크",
+      "started_at": "2026-09-25T22:26:00+09:00",
+      "finished_at": "2026-09-25T22:26:03+09:00",
+      "duration_s": 2.2,
+      "partial": false,
+      "meta": {
+        "api_url": "http://127.0.0.1:8000/v1",
+        "engine": "vLLM",
+        "serving": "vLLM · 슬롯 gemma4",
+        "model": "gemma4-31b-mtp-bf16kv-fast",
+        "max_context": 262144,
+        "gen_tokens": 128,
+        "users": 1,
+        "server_cold": false
+      },
+      "stages": [
+        {
+          "target_tokens": 2048,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 2053,
+          "ttft_s": 1.193,
+          "pp_tok_s": 1721.5,
+          "decode_tok_s": 129.9,
+          "decode_tokens": 128,
+          "total_s": 2.17
+        }
+      ],
+      "summary": {
+        "pp_tok_s": 1721.5,
+        "decode_tok_s": 129.9,
+        "best_pp_tok_s": 1721.5
+      }
+    },
+    {
+      "id": "5d496165f0a5",
+      "card_id": "8525837f92e4",
+      "card_title": "새 벤치마크 09-25 21:08",
+      "kind": "detailed",
+      "kind_label": "상세 벤치마크 (1k→64k)",
+      "started_at": "2026-09-25T21:20:31+09:00",
+      "finished_at": "2026-09-25T21:24:44+09:00",
+      "duration_s": 253.5,
+      "partial": false,
+      "meta": {
+        "api_url": "http://127.0.0.1:8000/v1",
+        "engine": "vLLM",
+        "serving": "vLLM · 슬롯 test2",
+        "model": "qwen3.8-flash-next",
+        "max_context": 262144,
+        "gen_tokens": 128,
+        "users": 8,
+        "server_cold": false
+      },
+      "stages": [
+        {
+          "target_tokens": 1024,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 1015,
+          "ttft_s": 0.305,
+          "pp_tok_s": 3329.9,
+          "decode_tok_s": 137.6,
+          "decode_tokens": 128,
+          "total_s": 1.228,
+          "concurrent": {
+            "users": 8,
+            "ok": true,
+            "completed": 8,
+            "errors": [],
+            "prompt_tokens_avg": 1026,
+            "avg_ttft_s": 1.673,
+            "max_ttft_s": 1.7,
+            "per_user_decode_tok_s": 46.6,
+            "total_decode_tok_s": 247.2,
+            "per_user_pp_tok_s": 614.7
+          }
+        },
+        {
+          "target_tokens": 2048,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 2029,
+          "ttft_s": 0.489,
+          "pp_tok_s": 4151.7,
+          "decode_tok_s": 116.5,
+          "decode_tokens": 128,
+          "total_s": 1.578,
+          "concurrent": {
+            "users": 8,
+            "ok": true,
+            "completed": 8,
+            "errors": [],
+            "prompt_tokens_avg": 2037,
+            "avg_ttft_s": 2.997,
+            "max_ttft_s": 3.173,
+            "per_user_decode_tok_s": 42.6,
+            "total_decode_tok_s": 231.2,
+            "per_user_pp_tok_s": 700.7
+          }
+        },
+        {
+          "target_tokens": 4096,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 4081,
+          "ttft_s": 0.845,
+          "pp_tok_s": 4828.7,
+          "decode_tok_s": 112.4,
+          "decode_tokens": 128,
+          "total_s": 1.975,
+          "concurrent": {
+            "users": 8,
+            "ok": true,
+            "completed": 8,
+            "errors": [],
+            "prompt_tokens_avg": 4098,
+            "avg_ttft_s": 5.587,
+            "max_ttft_s": 6.122,
+            "per_user_decode_tok_s": 43.6,
+            "total_decode_tok_s": 150.5,
+            "per_user_pp_tok_s": 819.2
+          }
+        },
+        {
+          "target_tokens": 8192,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 8191,
+          "ttft_s": 1.536,
+          "pp_tok_s": 5332.6,
+          "decode_tok_s": 120.5,
+          "decode_tokens": 128,
+          "total_s": 2.59,
+          "concurrent": {
+            "users": 8,
+            "ok": true,
+            "completed": 8,
+            "errors": [],
+            "prompt_tokens_avg": 8196,
+            "avg_ttft_s": 9.801,
+            "max_ttft_s": 12.248,
+            "per_user_decode_tok_s": 34.3,
+            "total_decode_tok_s": 85.2,
+            "per_user_pp_tok_s": 1032.0
+          }
+        },
+        {
+          "target_tokens": 16384,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 16379,
+          "ttft_s": 3.027,
+          "pp_tok_s": 5411.0,
+          "decode_tok_s": 124.9,
+          "decode_tokens": 128,
+          "total_s": 4.044,
+          "concurrent": {
+            "users": 8,
+            "ok": true,
+            "completed": 8,
+            "errors": [],
+            "prompt_tokens_avg": 16386,
+            "avg_ttft_s": 17.334,
+            "max_ttft_s": 24.403,
+            "per_user_decode_tok_s": 24.7,
+            "total_decode_tok_s": 48.2,
+            "per_user_pp_tok_s": 1173.3
+          }
+        },
+        {
+          "target_tokens": 32768,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 32783,
+          "ttft_s": 6.145,
+          "pp_tok_s": 5334.6,
+          "decode_tok_s": 127.6,
+          "decode_tokens": 128,
+          "total_s": 7.141,
+          "concurrent": {
+            "users": 8,
+            "ok": true,
+            "completed": 8,
+            "errors": [],
+            "prompt_tokens_avg": 32763,
+            "avg_ttft_s": 31.929,
+            "max_ttft_s": 49.116,
+            "per_user_decode_tok_s": 18.2,
+            "total_decode_tok_s": 24.9,
+            "per_user_pp_tok_s": 1334.7
+          }
+        },
+        {
+          "target_tokens": 65536,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 65521,
+          "ttft_s": 12.605,
+          "pp_tok_s": 5197.9,
+          "decode_tok_s": 132.3,
+          "decode_tokens": 128,
+          "total_s": 13.565,
+          "concurrent": {
+            "users": 8,
+            "ok": true,
+            "completed": 8,
+            "errors": [],
+            "prompt_tokens_avg": 65533,
+            "avg_ttft_s": 61.169,
+            "max_ttft_s": 103.018,
+            "per_user_decode_tok_s": 16.8,
+            "total_decode_tok_s": 11.6,
+            "per_user_pp_tok_s": 1488.3
+          }
+        }
+      ],
+      "summary": {
+        "pp_tok_s": 3329.9,
+        "decode_tok_s": 132.3,
+        "best_pp_tok_s": 5411.0,
+        "concurrent": {
+          "users": 8,
+          "per_user_decode_tok_s": 16.8,
+          "total_decode_tok_s": 11.6,
+          "avg_ttft_s": 61.169
+        }
+      }
+    },
+    {
+      "id": "d80cc4b71b32",
+      "card_id": "8525837f92e4",
+      "card_title": "새 벤치마크 09-25 21:08",
+      "kind": "detailed",
+      "kind_label": "상세 벤치마크 (1k→64k)",
+      "started_at": "2026-09-25T21:20:27+09:00",
+      "finished_at": "2026-09-25T21:20:30+09:00",
+      "duration_s": 2.4,
+      "partial": true,
+      "meta": {
+        "api_url": "http://127.0.0.1:8000/v1",
+        "engine": "vLLM",
+        "serving": "vLLM · 슬롯 test2",
+        "model": "qwen3.8-flash-next",
+        "max_context": 262144,
+        "gen_tokens": 128,
+        "users": 4,
+        "server_cold": false
+      },
+      "stages": [
+        {
+          "target_tokens": 1024,
+          "skipped": false,
+          "note": "동시 측정 실패: #1: TimeoutError; #4: TimeoutError; #2: TimeoutError",
+          "prompt_tokens": 1041,
+          "ttft_s": 0.357,
+          "pp_tok_s": 2912.5,
+          "decode_tok_s": 138.4,
+          "decode_tokens": 128,
+          "total_s": 1.275
+        }
+      ],
+      "summary": {
+        "pp_tok_s": 2912.5,
+        "decode_tok_s": 138.4,
+        "best_pp_tok_s": 2912.5
+      }
+    },
+    {
+      "id": "211b85f0e5c2",
+      "card_id": "8525837f92e4",
+      "card_title": "새 벤치마크 09-25 21:08",
+      "kind": "long200k",
+      "kind_label": "200k 장문",
+      "started_at": "2026-09-25T21:09:43+09:00",
+      "finished_at": "2026-09-25T21:10:28+09:00",
+      "duration_s": 44.7,
+      "partial": false,
+      "meta": {
+        "api_url": "http://127.0.0.1:8000/v1",
+        "engine": "vLLM",
+        "serving": "vLLM · 슬롯 test2",
+        "model": "qwen3.8-flash-next",
+        "max_context": 262144,
+        "gen_tokens": 128,
+        "users": 1,
+        "server_cold": false
+      },
+      "stages": [
+        {
+          "target_tokens": 200000,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 199995,
+          "ttft_s": 42.971,
+          "pp_tok_s": 4654.1,
+          "decode_tok_s": 113.1,
+          "decode_tokens": 128,
+          "total_s": 44.095
+        }
+      ],
+      "summary": {
+        "pp_tok_s": 4654.1,
+        "decode_tok_s": 113.1,
+        "best_pp_tok_s": 4654.1
+      }
+    },
+    {
+      "id": "ab754ec01a50",
+      "card_id": "8525837f92e4",
+      "card_title": "새 벤치마크 09-25 21:08",
+      "kind": "detailed",
+      "kind_label": "상세 벤치마크 (1k→64k)",
+      "started_at": "2026-09-25T21:08:57+09:00",
+      "finished_at": "2026-09-25T21:09:30+09:00",
+      "duration_s": 32.7,
+      "partial": false,
+      "meta": {
+        "api_url": "http://127.0.0.1:8000/v1",
+        "engine": "vLLM",
+        "serving": "vLLM · 슬롯 test2",
+        "model": "qwen3.8-flash-next",
+        "max_context": 262144,
+        "gen_tokens": 128,
+        "users": 1,
+        "server_cold": false
+      },
+      "stages": [
+        {
+          "target_tokens": 1024,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 1027,
+          "ttft_s": 0.34,
+          "pp_tok_s": 3016.5,
+          "decode_tok_s": 105.8,
+          "decode_tokens": 128,
+          "total_s": 1.541
+        },
+        {
+          "target_tokens": 2048,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 2053,
+          "ttft_s": 0.487,
+          "pp_tok_s": 4212.4,
+          "decode_tok_s": 107.1,
+          "decode_tokens": 128,
+          "total_s": 1.673
+        },
+        {
+          "target_tokens": 4096,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 4108,
+          "ttft_s": 0.844,
+          "pp_tok_s": 4866.5,
+          "decode_tok_s": 127.9,
+          "decode_tokens": 128,
+          "total_s": 1.837
+        },
+        {
+          "target_tokens": 8192,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 8201,
+          "ttft_s": 1.547,
+          "pp_tok_s": 5302.1,
+          "decode_tok_s": 109.9,
+          "decode_tokens": 128,
+          "total_s": 2.703
+        },
+        {
+          "target_tokens": 16384,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 16379,
+          "ttft_s": 3.024,
+          "pp_tok_s": 5416.5,
+          "decode_tok_s": 132.4,
+          "decode_tokens": 128,
+          "total_s": 3.983
+        },
+        {
+          "target_tokens": 32768,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 32761,
+          "ttft_s": 6.11,
+          "pp_tok_s": 5362.0,
+          "decode_tok_s": 133.4,
+          "decode_tokens": 128,
+          "total_s": 7.062
+        },
+        {
+          "target_tokens": 65536,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 65551,
+          "ttft_s": 12.525,
+          "pp_tok_s": 5233.6,
+          "decode_tok_s": 128.8,
+          "decode_tokens": 128,
+          "total_s": 13.511
+        }
+      ],
+      "summary": {
+        "pp_tok_s": 3016.5,
+        "decode_tok_s": 128.8,
+        "best_pp_tok_s": 5416.5
+      }
+    },
+    {
+      "id": "f519fe0b9a48",
+      "card_id": "8525837f92e4",
+      "card_title": "새 벤치마크 09-25 21:08",
+      "kind": "quick",
+      "kind_label": "짧은 벤치마크",
+      "started_at": "2026-09-25T21:08:48+09:00",
+      "finished_at": "2026-09-25T21:08:50+09:00",
+      "duration_s": 2.0,
+      "partial": false,
+      "meta": {
+        "api_url": "http://127.0.0.1:8000/v1",
+        "engine": "vLLM",
+        "serving": "vLLM · 슬롯 test2",
+        "model": "qwen3.8-flash-next",
+        "max_context": 262144,
+        "gen_tokens": 128,
+        "users": 1,
+        "server_cold": true
+      },
+      "stages": [
+        {
+          "target_tokens": 2048,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 2053,
+          "ttft_s": 0.723,
+          "pp_tok_s": 2840.5,
+          "decode_tok_s": 112.6,
+          "decode_tokens": 128,
+          "total_s": 1.851
+        }
+      ],
+      "summary": {
+        "pp_tok_s": 2840.5,
+        "decode_tok_s": 112.6,
+        "best_pp_tok_s": 2840.5
+      }
+    },
+    {
+      "id": "eec6e9f2fb09",
+      "card_id": "bf48598597f6",
+      "card_title": "새 벤치마크 09-25 18:02",
+      "kind": "long200k",
+      "kind_label": "200k 장문",
+      "started_at": "2026-09-25T18:05:49+09:00",
+      "finished_at": "2026-09-25T18:06:35+09:00",
+      "duration_s": 45.5,
+      "partial": false,
+      "meta": {
+        "api_url": "http://127.0.0.1:8000/v1",
+        "engine": "vLLM",
+        "serving": "vLLM · 슬롯 test2",
+        "model": "qwen3.8-flash-next",
+        "max_context": 262144,
+        "gen_tokens": 128,
+        "users": 1,
+        "server_cold": false
+      },
+      "stages": [
+        {
+          "target_tokens": 200000,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 199993,
+          "ttft_s": 43.855,
+          "pp_tok_s": 4560.3,
+          "decode_tok_s": 120.9,
+          "decode_tokens": 128,
+          "total_s": 44.906
+        }
+      ],
+      "summary": {
+        "pp_tok_s": 4560.3,
+        "decode_tok_s": 120.9,
+        "best_pp_tok_s": 4560.3
+      }
+    },
+    {
+      "id": "a6e7bae7d66e",
+      "card_id": "bf48598597f6",
+      "card_title": "새 벤치마크 09-25 18:02",
+      "kind": "detailed",
+      "kind_label": "상세 벤치마크 (1k→64k)",
+      "started_at": "2026-09-25T18:02:58+09:00",
+      "finished_at": "2026-09-25T18:03:31+09:00",
+      "duration_s": 32.7,
+      "partial": false,
+      "meta": {
+        "api_url": "http://127.0.0.1:8000/v1",
+        "engine": "vLLM",
+        "serving": "vLLM · 슬롯 test2",
+        "model": "qwen3.8-flash-next",
+        "max_context": 262144,
+        "gen_tokens": 128,
+        "users": 1,
+        "server_cold": false
+      },
+      "stages": [
+        {
+          "target_tokens": 1024,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 1027,
+          "ttft_s": 0.333,
+          "pp_tok_s": 3088.1,
+          "decode_tok_s": 131.5,
+          "decode_tokens": 128,
+          "total_s": 1.299
+        },
+        {
+          "target_tokens": 2048,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 2031,
+          "ttft_s": 0.487,
+          "pp_tok_s": 4168.4,
+          "decode_tok_s": 114.6,
+          "decode_tokens": 128,
+          "total_s": 1.595
+        },
+        {
+          "target_tokens": 4096,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 4096,
+          "ttft_s": 0.865,
+          "pp_tok_s": 4734.0,
+          "decode_tok_s": 145.7,
+          "decode_tokens": 128,
+          "total_s": 1.737
+        },
+        {
+          "target_tokens": 8192,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 8209,
+          "ttft_s": 1.573,
+          "pp_tok_s": 5219.1,
+          "decode_tok_s": 129.0,
+          "decode_tokens": 128,
+          "total_s": 2.557
+        },
+        {
+          "target_tokens": 16384,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 16381,
+          "ttft_s": 3.1,
+          "pp_tok_s": 5284.3,
+          "decode_tok_s": 135.5,
+          "decode_tokens": 128,
+          "total_s": 4.037
+        },
+        {
+          "target_tokens": 32768,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 32761,
+          "ttft_s": 6.244,
+          "pp_tok_s": 5246.5,
+          "decode_tok_s": 126.7,
+          "decode_tokens": 128,
+          "total_s": 7.247
+        },
+        {
+          "target_tokens": 65536,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 65521,
+          "ttft_s": 12.811,
+          "pp_tok_s": 5114.3,
+          "decode_tok_s": 119.0,
+          "decode_tokens": 128,
+          "total_s": 13.879
+        }
+      ],
+      "summary": {
+        "pp_tok_s": 3088.1,
+        "decode_tok_s": 119.0,
+        "best_pp_tok_s": 5284.3
+      }
+    },
+    {
+      "id": "f2854fc71184",
+      "card_id": "bf48598597f6",
+      "card_title": "새 벤치마크 09-25 18:02",
+      "kind": "quick",
+      "kind_label": "짧은 벤치마크",
+      "started_at": "2026-09-25T18:02:52+09:00",
+      "finished_at": "2026-09-25T18:02:54+09:00",
+      "duration_s": 1.7,
+      "partial": false,
+      "meta": {
+        "api_url": "http://127.0.0.1:8000/v1",
+        "engine": "vLLM",
+        "serving": "vLLM · 슬롯 test2",
+        "model": "qwen3.8-flash-next",
+        "max_context": 262144,
+        "gen_tokens": 128,
+        "users": 1,
+        "server_cold": false
+      },
+      "stages": [
+        {
+          "target_tokens": 2048,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 2041,
+          "ttft_s": 0.533,
+          "pp_tok_s": 3826.3,
+          "decode_tok_s": 109.4,
+          "decode_tokens": 128,
+          "total_s": 1.694
+        }
+      ],
+      "summary": {
+        "pp_tok_s": 3826.3,
+        "decode_tok_s": 109.4,
+        "best_pp_tok_s": 3826.3
+      }
+    },
+    {
+      "id": "b4624e8d0722",
+      "card_id": "9bec7aea4ad5",
+      "card_title": "새 벤치마크 09-25 11:05",
+      "kind": "long200k",
+      "kind_label": "200k 장문",
+      "started_at": "2026-09-25T11:07:10+09:00",
+      "finished_at": "2026-09-25T11:07:58+09:00",
+      "duration_s": 47.4,
+      "partial": false,
+      "meta": {
+        "api_url": "http://127.0.0.1:8000/v1",
+        "engine": "vLLM",
+        "serving": "vLLM · 슬롯 qwen3.8-27b-단일",
+        "model": "qwen3.8-flash-next",
+        "max_context": 262144,
+        "gen_tokens": 128,
+        "users": 1,
+        "server_cold": false
+      },
+      "stages": [
+        {
+          "target_tokens": 200000,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 199993,
+          "ttft_s": 45.882,
+          "pp_tok_s": 4358.8,
+          "decode_tok_s": 145.3,
+          "decode_tokens": 128,
+          "total_s": 46.756
+        }
+      ],
+      "summary": {
+        "pp_tok_s": 4358.8,
+        "decode_tok_s": 145.3,
+        "best_pp_tok_s": 4358.8
+      }
+    },
+    {
+      "id": "27f1e50714bc",
+      "card_id": "9bec7aea4ad5",
+      "card_title": "새 벤치마크 09-25 11:05",
+      "kind": "detailed",
+      "kind_label": "상세 벤치마크 (1k→64k)",
+      "started_at": "2026-09-25T11:06:31+09:00",
+      "finished_at": "2026-09-25T11:07:04+09:00",
+      "duration_s": 33.3,
+      "partial": false,
+      "meta": {
+        "api_url": "http://127.0.0.1:8000/v1",
+        "engine": "vLLM",
+        "serving": "vLLM · 슬롯 qwen3.8-27b-단일",
+        "model": "qwen3.8-flash-next",
+        "max_context": 262144,
+        "gen_tokens": 128,
+        "users": 1,
+        "server_cold": false
+      },
+      "stages": [
+        {
+          "target_tokens": 1024,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 1027,
+          "ttft_s": 0.336,
+          "pp_tok_s": 3055.7,
+          "decode_tok_s": 136.5,
+          "decode_tokens": 128,
+          "total_s": 1.266
+        },
+        {
+          "target_tokens": 2048,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 2053,
+          "ttft_s": 0.499,
+          "pp_tok_s": 4112.2,
+          "decode_tok_s": 127.1,
+          "decode_tokens": 128,
+          "total_s": 1.498
+        },
+        {
+          "target_tokens": 4096,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 4096,
+          "ttft_s": 0.91,
+          "pp_tok_s": 4503.2,
+          "decode_tok_s": 136.6,
+          "decode_tokens": 128,
+          "total_s": 1.839
+        },
+        {
+          "target_tokens": 8192,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 8178,
+          "ttft_s": 1.643,
+          "pp_tok_s": 4976.4,
+          "decode_tok_s": 160.4,
+          "decode_tokens": 128,
+          "total_s": 2.435
+        },
+        {
+          "target_tokens": 16384,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 16379,
+          "ttft_s": 3.239,
+          "pp_tok_s": 5057.0,
+          "decode_tok_s": 135.6,
+          "decode_tokens": 128,
+          "total_s": 4.175
+        },
+        {
+          "target_tokens": 32768,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 32757,
+          "ttft_s": 6.518,
+          "pp_tok_s": 5025.5,
+          "decode_tok_s": 129.6,
+          "decode_tokens": 128,
+          "total_s": 7.498
+        },
+        {
+          "target_tokens": 65536,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 65528,
+          "ttft_s": 13.357,
+          "pp_tok_s": 4906.1,
+          "decode_tok_s": 147.9,
+          "decode_tokens": 128,
+          "total_s": 14.215
+        }
+      ],
+      "summary": {
+        "pp_tok_s": 3055.7,
+        "decode_tok_s": 147.9,
+        "best_pp_tok_s": 5057.0
+      }
+    },
+    {
+      "id": "62b7a5156df2",
+      "card_id": "9bec7aea4ad5",
+      "card_title": "새 벤치마크 09-25 11:05",
+      "kind": "quick",
+      "kind_label": "짧은 벤치마크",
+      "started_at": "2026-09-25T11:05:15+09:00",
+      "finished_at": "2026-09-25T11:05:17+09:00",
+      "duration_s": 1.9,
+      "partial": false,
+      "meta": {
+        "api_url": "http://127.0.0.1:8000/v1",
+        "engine": "vLLM",
+        "serving": "vLLM · 슬롯 qwen3.8-27b-단일",
+        "model": "qwen3.8-flash-next",
+        "max_context": 262144,
+        "gen_tokens": 128,
+        "users": 1,
+        "server_cold": true
+      },
+      "stages": [
+        {
+          "target_tokens": 2048,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 2041,
+          "ttft_s": 0.766,
+          "pp_tok_s": 2663.8,
+          "decode_tok_s": 124.7,
+          "decode_tokens": 128,
+          "total_s": 1.784
+        }
+      ],
+      "summary": {
+        "pp_tok_s": 2663.8,
+        "decode_tok_s": 124.7,
+        "best_pp_tok_s": 2663.8
+      }
+    },
+    {
+      "id": "503be1bb5ea3",
+      "card_id": "b74e4d85b4a6",
+      "card_title": "새 벤치마크 09-24 20:56",
+      "kind": "long200k",
+      "kind_label": "200k 장문",
+      "started_at": "2026-09-24T20:58:03+09:00",
+      "finished_at": "2026-09-24T20:58:48+09:00",
+      "duration_s": 45.6,
+      "partial": false,
+      "meta": {
+        "api_url": "http://127.0.0.1:8000/v1",
+        "engine": "vLLM",
+        "serving": "vLLM · 슬롯 Qwen3.8-Flash-Next-Uncensored-AWQ-g32",
+        "model": "qwen3.8-flash-next",
+        "max_context": 262144,
+        "gen_tokens": 128,
+        "users": 1,
+        "server_cold": false
+      },
+      "stages": [
+        {
+          "target_tokens": 200000,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 200001,
+          "ttft_s": 43.975,
+          "pp_tok_s": 4548.1,
+          "decode_tok_s": 123.7,
+          "decode_tokens": 128,
+          "total_s": 45.001
+        }
+      ],
+      "summary": {
+        "pp_tok_s": 4548.1,
+        "decode_tok_s": 123.7,
+        "best_pp_tok_s": 4548.1
+      }
+    },
+    {
+      "id": "55047df2332f",
+      "card_id": "b74e4d85b4a6",
+      "card_title": "새 벤치마크 09-24 20:56",
+      "kind": "detailed",
+      "kind_label": "상세 벤치마크 (1k→64k)",
+      "started_at": "2026-09-24T20:57:02+09:00",
+      "finished_at": "2026-09-24T20:57:36+09:00",
+      "duration_s": 33.4,
+      "partial": false,
+      "meta": {
+        "api_url": "http://127.0.0.1:8000/v1",
+        "engine": "vLLM",
+        "serving": "vLLM · 슬롯 Qwen3.8-Flash-Next-Uncensored-AWQ-g32",
+        "model": "qwen3.8-flash-next",
+        "max_context": 262144,
+        "gen_tokens": 128,
+        "users": 1,
+        "server_cold": false
+      },
+      "stages": [
+        {
+          "target_tokens": 1024,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 1027,
+          "ttft_s": 0.35,
+          "pp_tok_s": 2930.2,
+          "decode_tok_s": 109.9,
+          "decode_tokens": 128,
+          "total_s": 1.506
+        },
+        {
+          "target_tokens": 2048,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 2041,
+          "ttft_s": 0.492,
+          "pp_tok_s": 4150.8,
+          "decode_tok_s": 126.0,
+          "decode_tokens": 128,
+          "total_s": 1.5
+        },
+        {
+          "target_tokens": 4096,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 4108,
+          "ttft_s": 0.868,
+          "pp_tok_s": 4730.4,
+          "decode_tok_s": 120.9,
+          "decode_tokens": 128,
+          "total_s": 1.919
+        },
+        {
+          "target_tokens": 8192,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 8178,
+          "ttft_s": 1.583,
+          "pp_tok_s": 5166.7,
+          "decode_tok_s": 131.4,
+          "decode_tokens": 128,
+          "total_s": 2.549
+        },
+        {
+          "target_tokens": 16384,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 16392,
+          "ttft_s": 3.111,
+          "pp_tok_s": 5268.2,
+          "decode_tok_s": 128.3,
+          "decode_tokens": 128,
+          "total_s": 4.102
+        },
+        {
+          "target_tokens": 32768,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 32761,
+          "ttft_s": 6.233,
+          "pp_tok_s": 5255.8,
+          "decode_tok_s": 110.1,
+          "decode_tokens": 128,
+          "total_s": 7.387
+        },
+        {
+          "target_tokens": 65536,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 65521,
+          "ttft_s": 12.779,
+          "pp_tok_s": 5127.4,
+          "decode_tok_s": 103.6,
+          "decode_tokens": 128,
+          "total_s": 14.004
+        }
+      ],
+      "summary": {
+        "pp_tok_s": 2930.2,
+        "decode_tok_s": 103.6,
+        "best_pp_tok_s": 5268.2
+      }
+    },
+    {
+      "id": "e611ffc5e3f8",
+      "card_id": "b74e4d85b4a6",
+      "card_title": "새 벤치마크 09-24 20:56",
+      "kind": "quick",
+      "kind_label": "짧은 벤치마크",
+      "started_at": "2026-09-24T20:56:49+09:00",
+      "finished_at": "2026-09-24T20:56:51+09:00",
+      "duration_s": 2.0,
+      "partial": false,
+      "meta": {
+        "api_url": "http://127.0.0.1:8000/v1",
+        "engine": "vLLM",
+        "serving": "vLLM · 슬롯 Qwen3.8-Flash-Next-Uncensored-AWQ-g32",
+        "model": "qwen3.8-flash-next",
+        "max_context": 262144,
+        "gen_tokens": 128,
+        "users": 1,
+        "server_cold": true
+      },
+      "stages": [
+        {
+          "target_tokens": 2048,
+          "skipped": false,
+          "note": "",
+          "prompt_tokens": 2041,
+          "ttft_s": 0.812,
+          "pp_tok_s": 2512.1,
+          "decode_tok_s": 116.4,
+          "decode_tokens": 128,
+          "total_s": 1.904
+        }
+      ],
+      "summary": {
+        "pp_tok_s": 2512.1,
+        "decode_tok_s": 116.4,
+        "best_pp_tok_s": 2512.1
+      }
+    },
     {
       "id": "c02422b04a7e",
       "card_id": "63f03006d219",
