@@ -1894,6 +1894,11 @@ def _service_state(name):
             # it exists, even before the vLLM Python process/health port does.
             st["running"] = True
             st["external"] = True
+        if st["container_id"]:
+            try:
+                st["running_slot"] = _vllm_running_slot(st)
+            except Exception:
+                st["running_slot"] = None
     if name == "unsloth":
         executable = _unsloth_executable()
         st["available"] = bool(executable)
@@ -4119,6 +4124,95 @@ def _docker_container_active(container_id):
 def _vllm_container_id():
     ids = _vllm_container_ids()
     return sorted(ids)[0] if ids else None
+
+
+def _docker_inspect_vllm_container(container_id):
+    """Return {name, image, state, started} for a container id, or None."""
+    if not container_id:
+        return None
+    docker = shutil.which("docker")
+    if not docker:
+        return None
+    fmt = (
+        "{{.Name}}\t{{.Config.Image}}\t{{.State.Status}}\t{{.State.StartedAt}}\t"
+        '{{range .Mounts}}{{if eq .Type "bind"}}{{.Source}};{{end}}{{end}}'
+    )
+    prefixes = [[docker]]
+    sudo = shutil.which("sudo")
+    if sudo:
+        prefixes.insert(0, [sudo, "-n", docker])
+    for prefix in prefixes:
+        try:
+            completed = subprocess.run(
+                [*prefix, "inspect", "--format", fmt, container_id],
+                capture_output=True, text=True, timeout=5, creationflags=NO_WINDOW,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if completed.returncode == 0 and completed.stdout.strip():
+            parts = completed.stdout.strip().split("\t", 4)
+            if len(parts) >= 3:
+                return {
+                    "name": parts[0].lstrip("/"),
+                    "image": parts[1],
+                    "state": parts[2],
+                    "started": parts[3] if len(parts) > 3 else "",
+                    "binds": [item for item in (parts[4] if len(parts) > 4 else "").split(";") if item],
+                }
+    return None
+
+
+def _vllm_slot_bind_sources(raw_command):
+    """슬롯 명령어의 -v/--volume 바인딩 소스 경로 목록(볼륨 이름 제외)."""
+    sources = []
+    for match in re.finditer(r"(?:^|[\s)])(?:-v|--volume)[=\s]+([^\s\\]+?):[^\s\\]*", raw_command):
+        source = match.group(1)
+        if source.startswith("/") or source.startswith("~"):
+            sources.append(source)
+    return sources
+
+
+def _vllm_running_slot(st):
+    """대조 중인 vLLM 컨테이너가 어떤 슬롯인지 식별 (UI의 '실행 중' 배지용).
+
+    우선순위: (1) 실행 시 추적한 컨테이너 이름, (2) 실행 컨테이너 이름 = 슬롯
+    명령어의 --name. 포트는 슬롯 대부분이 8000이라 식별자가 될 수 없고, 일치하는
+    컨테이너 이름이 없으면 외부(슬롯 밖) 실행으로 구분한다. 다른 슬롯과 --name을
+    공유하면 bind 마운트(모델 경로 등)가 실컨테이너와 일치하는 슬롯만 실행자로
+    본다 — 이름만 같고 모델이 다르면 그 슬롯은 "같은 이름 슬롯"으로만 표시.
+    """
+    container_id = st.get("container_id")
+    if not container_id:
+        return None
+    inspected = _docker_inspect_vllm_container(container_id)
+    running_name = (inspected or {}).get("name") or ""
+    running_binds = set((inspected or {}).get("binds") or [])
+    slots = _vllm_slots_load()
+    tracked_name = getattr(services["vllm"], "container_name", None)
+    name_matched = []
+    for slot in slots:
+        slot_cname = _vllm_container_name(slot.get("command") or "")
+        if not slot_cname:
+            continue
+        if (tracked_name and slot_cname == tracked_name) or (running_name and slot_cname == running_name):
+            name_matched.append(slot)
+    matched = name_matched
+    if len(name_matched) > 1:
+        winners = [
+            slot for slot in name_matched
+            if any(src in running_binds for src in _vllm_slot_bind_sources(slot.get("command") or ""))
+        ]
+        if winners:
+            matched = winners
+    return {
+        "container": inspected or {"name": "", "image": "", "state": "unknown", "started": "", "binds": []},
+        "matched_ids": [slot["id"] for slot in matched],
+        "matched_names": [slot["name"] for slot in matched],
+        "same_name_ids": [slot["id"] for slot in name_matched if slot not in matched],
+        "same_name_names": [slot["name"] for slot in name_matched if slot not in matched],
+        "external": not name_matched,
+        "port": st.get("port"),
+    }
 
 
 def _stop_vllm_container(container_id, force=False):

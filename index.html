@@ -795,7 +795,10 @@
 
             <!-- vLLM (슬롯 명령어 런처) -->
             <div v-if="serviceVisible('vllm')" :style="{ order: cardOrder('vllm') }" class="svc-card bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col hover:border-zinc-700 transition relative overflow-hidden">
-                <div v-if="status.vllm" class="absolute top-0 right-0 bg-rose-500/10 border-b border-l border-rose-500/20 text-rose-300 text-[10px] font-semibold px-2 py-1 rounded-bl-lg">VRAM Active</div>
+                <div v-if="status.vllm" class="absolute top-0 right-0 bg-emerald-500/10 border-b border-l border-emerald-500/20 text-emerald-300 text-[10px] font-semibold px-2 py-1 rounded-bl-lg flex items-center gap-1.5">
+                    <span class="font-mono">{{ vllmActive ? vllmActive.label : '실행 중' }}</span>
+                    <span v-if="vllmActive && vllmActive.elapsed > 0" class="font-mono text-emerald-400/70">{{ formatServiceUptime(vllmActive.elapsed) }}</span>
+                </div>
                 <div class="flex justify-between items-start mb-4">
                     <div>
                         <h3 class="flex items-center gap-2 text-base font-semibold text-zinc-100"><img src="/service-icon/vllm" alt="" class="h-6 w-6 shrink-0 object-contain">vLLM</h3>
@@ -813,7 +816,7 @@
                 <!-- 슬롯 목록: 클릭 실행 + 인라인 제목 변경 (편집은 대형 모달) -->
                 <div class="mb-4 space-y-2">
                     <div v-if="!vllmSlots.length" class="rounded-lg border border-dashed border-zinc-800 px-3 py-4 text-center text-[11px] text-zinc-600">슬롯이 없습니다. <span class="text-rose-300">슬롯 편집</span>에서 완성된 vLLM 실행 명령어를 추가하세요.</div>
-                    <div v-for="slot in vllmSlots" :key="slot.id" class="rounded-lg border bg-zinc-950/40 transition" :class="vllmRenameId === slot.id ? 'border-rose-500/40' : 'border-zinc-800'">
+                    <div v-for="slot in vllmSlots" :key="slot.id" class="rounded-lg border bg-zinc-950/40 transition" :class="vllmRenameId === slot.id ? 'border-rose-500/40' : (vllmSlotActive(slot) ? 'border-emerald-500/50 bg-emerald-500/[0.04]' : (vllmSlotSameName(slot) ? 'border-amber-500/30' : 'border-zinc-800'))">
                         <!-- 인라인 제목 편집 -->
                         <div v-if="vllmRenameId === slot.id" class="flex items-center gap-1.5 p-2">
                             <input ref="vllmRenameInput" v-model="vllmRenameValue" maxlength="80" placeholder="슬롯 제목" class="input-base min-w-0 flex-1 text-xs font-medium" @keydown.enter.prevent="commitVllmRename(slot)" @keydown.esc="cancelVllmRename()" @blur="commitVllmRename(slot)">
@@ -824,8 +827,11 @@
                         <div v-else class="flex items-stretch" :class="!(status.vllm || vllmRunning) ? 'hover:border-rose-500/30' : ''">
                             <button @click="runVllmSlot(slot)" :disabled="status.vllm || vllmRunning" :title="slot.command" class="flex min-w-0 flex-1 flex-col gap-1 px-2.5 py-2 text-left transition" :class="status.vllm || vllmRunning ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'">
                                 <span class="flex w-full items-center justify-between gap-2">
-                                    <span class="truncate text-xs font-medium text-zinc-300">{{ slot.name }}</span>
-                                    <span class="shrink-0 text-[9px] font-mono" :class="status.vllm ? 'text-zinc-600' : 'text-rose-300'">{{ vllmRunning ? '실행 시작…' : (status.vllm ? '먼저 Stop' : '클릭 실행') }}</span>
+                                    <span class="flex min-w-0 items-center gap-1.5">
+                                        <span v-if="vllmSlotActive(slot)" class="shrink-0 rounded bg-emerald-500/15 px-1 py-px text-[8px] font-bold tracking-wide text-emerald-300">RUNNING</span>
+                                        <span class="truncate text-xs font-medium" :class="vllmSlotActive(slot) ? 'text-emerald-200' : 'text-zinc-300'">{{ slot.name }}</span>
+                                    </span>
+                                    <span class="shrink-0 text-[9px] font-mono" :class="vllmSlotActive(slot) ? 'text-emerald-400/80' : (vllmSlotSameName(slot) ? 'text-amber-300/80' : (status.vllm ? 'text-zinc-600' : 'text-rose-300'))">{{ vllmSlotActive(slot) ? '실행 중' : (vllmSlotSameName(slot) ? '같은 이름' : (vllmRunning ? '실행 시작…' : (status.vllm ? '먼저 Stop' : '클릭 실행'))) }}</span>
                                 </span>
                                 <span class="block truncate font-mono text-[10px] text-zinc-500">{{ slot.command }}</span>
                             </button>
@@ -834,6 +840,17 @@
                             </button>
                         </div>
                     </div>
+                </div>
+
+                <!-- 실행 중 컨테이너 상세 (서버가 docker inspect로 대조) -->
+                <div v-if="vllmActive && !vllmActive.unknown" class="mb-4 rounded-lg border border-emerald-500/20 bg-emerald-500/[0.05] px-2.5 py-2 space-y-0.5">
+                    <div class="flex items-center justify-between gap-2">
+                        <span class="text-[10px] font-semibold text-emerald-300">실행 중: {{ vllmActive.label }}</span>
+                        <span class="font-mono text-[9px] text-emerald-400/70">{{ vllmActive.state }} · {{ formatServiceUptime(vllmActive.elapsed) }}</span>
+                    </div>
+                    <div v-if="vllmActive.container && vllmActive.container.name" class="truncate font-mono text-[9px] text-zinc-500">컨테이너 {{ vllmActive.container.name }}<span v-if="vllmActive.container.image"> · {{ vllmActive.container.image }}</span></div>
+                    <div v-if="vllmActive.sameNameNames.length" class="text-[9px] text-amber-300/80">같은 컨테이너 이름을 쓰는 다른 슬롯: {{ vllmActive.sameNameNames.join(', ') }} — 지금 실행된 것은 이 슬롯의 명령어가 아닙니다.</div>
+                    <div v-if="vllmActive.external" class="text-[9px] text-amber-300/90">슬롯 목록과 일치하는 컨테이너가 없습니다 — 슬롯 밖(외부)에서 실행된 vLLM입니다.</div>
                 </div>
 
                 <div class="mt-auto space-y-2">
@@ -1961,6 +1978,28 @@
                         || this.comfyInstances[0]
                         || { key: 'main', label: 'ComfyUI', port: 8188 };
                 },
+                // vLLM 실행 슬롯 식별 — /api/status의 services.vllm.running_slot(서버가 컨테이너 inspect로 대조)을 그대로 투영.
+                vllmActive() {
+                    const st = this.serviceStates.vllm || {};
+                    const rs = st.running_slot || null;
+                    if (!st.running && !this.vllmRunning) return null;
+                    let elapsed = Number(st.ready ? st.ready_uptime : st.uptime) || 0;
+                    const startedMs = rs && rs.container && rs.container.started ? Date.parse(rs.container.started) : NaN;
+                    if (!Number.isNaN(startedMs)) elapsed = Math.max(0, (this.serviceClock - startedMs) / 1000);
+                    const names = (rs && rs.matched_names) || [];
+                    return {
+                        ids: new Set((rs && rs.matched_ids) || []),
+                        sameNameIds: new Set((rs && rs.same_name_ids) || []),
+                        sameNameNames: (rs && rs.same_name_names) || [],
+                        names,
+                        external: !!(rs && rs.external),
+                        unknown: !rs,
+                        container: (rs && rs.container) || null,
+                        state: (rs && rs.container && rs.container.state) || st.phase || '',
+                        elapsed,
+                        label: names.length ? names.join(' / ') : '슬롯 밖 실행',
+                    };
+                },
                 manualFanName() {
                     const id = this.motherboardFans.runtime?.manual_channel_id;
                     return (this.motherboardFans.channels || []).find(fan => fan.id === id)?.name || '팬';
@@ -3027,6 +3066,14 @@
                 },
 
                 // ---------- vLLM 슬롯 카드 ----------
+                vllmSlotActive(slot) {
+                    const active = this.vllmActive;
+                    return !!(active && active.ids.has(slot.id));
+                },
+                vllmSlotSameName(slot) {
+                    const active = this.vllmActive;
+                    return !!(active && active.sameNameIds.has(slot.id));
+                },
                 async fetchVllmSlots() {
                     try {
                         const res = await fetch('/api/vllm/slots');
