@@ -269,7 +269,13 @@ createApp({
     async refresh() {
       try {
         const d = await this.api('/api/llm-bench');
-        this.cards = d.cards || [];
+        // 입력 중 가드: 카드 안의 input/select에 포커스가 있으면 cards 배열을
+        // 교체하지 않는다 — 2초 주기 refresh가 v-model 입력값을 서버 값으로
+        // 덮어써서 타이핑 중인 내용이 지워지는 버그 방지.
+        const ae = document.activeElement;
+        const editing = ae && (ae.tagName === 'INPUT' || ae.tagName === 'SELECT' || ae.tagName === 'TEXTAREA')
+          && document.getElementById('app') && document.getElementById('app').contains(ae);
+        if (!editing) this.cards = d.cards || [];
         this.results = d.results || [];
         this.jobs = (d.jobs || []).filter(j => j.status === 'running');
         for (const c of this.cards) if (!this.models[c.id] && c.models) this.models[c.id] = c.models;
